@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neon Pixel Cables</title>
+<style>
+  html,body{margin:0;height:100%;background:#05010d;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second neon pixel-art style sample: the history of undersea internet cables on a glowing pixel world map."></canvas>
+<script>
+'use strict';
+/* Style sample: neon synthwave × pixel-art map (20 s loop).
+   The internet under the sea: 1858 telegraph → 1988 TAT-8 → 2017 MAREA → today.
+   Drawn into a 320×180 buffer, scaled up crisp, then a cheap bloom pass
+   (downscale → blurry upscale, added with "lighter") makes the neon glow.
+   Click = pause. ?t=8 opens paused at 8 s. */
+const BW = 320, BH = 180, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH; const b = buf.getContext('2d');
+const bloomCv = document.createElement('canvas'); bloomCv.width = 80; bloomCv.height = 45; const bl = bloomCv.getContext('2d');
+
+const N = { void:'#05010d', deep:'#0d0221', purple:'#2a0845', violet:'#4b0a5e', mag:'#ff2e97', pink:'#ff77c8', cyan:'#22d3ee', ice:'#b9f6ff',
+  yellow:'#fff45c', orange:'#ff8a3d', white:'#fff1e8', dim:'#3a1760', red:'#ff3355' };
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eIO = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const R = Math.round;
+const hash = (a, c = 0) => { const s = Math.sin(a * 127.1 + c * 311.7) * 43758.5453; return s - Math.floor(s); };
+
+/* ---------- pixel font ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x; x0 = R(x0); y = R(y);
+  if (shadow) pxText(s, x0 + sc, y + sc, shadow, sc); b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue; for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+function pxLine(x0, y0, x1, y1, col){
+  x0 = R(x0); y0 = R(y0); x1 = R(x1); y1 = R(y1); b.fillStyle = col;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let e = dx + dy;
+  for (let n = 0; n < 2000; n++){ b.fillRect(x0, y0, 1, 1); if (x0 === x1 && y0 === y1) break; const e2 = 2 * e; if (e2 >= dy){ e += dy; x0 += sx; } if (e2 <= dx){ e += dx; y0 += sy; } }
+}
+function pxDisc(cx, cy, r, col){ b.fillStyle = col; for (let y = -r; y <= r; y++){ const w = R(Math.sqrt(r * r - y * y)); b.fillRect(R(cx - w), R(cy + y), w * 2, 1); } }
+
+/* ---------- synthwave backdrop (title + end) ---------- */
+const SKY = ['#12002b', '#1a0236', '#240541', '#30084c', '#3d0a57', '#4b0a5e', '#661066', '#82176e', '#a31d78', '#c92381', '#ef2b8c', '#ff2e97'];
+function synth(t, sunY){
+  const hz = 112;
+  for (let i = 0; i < SKY.length; i++){ const y0 = R(i * hz / SKY.length), y1 = R((i + 1) * hz / SKY.length); b.fillStyle = SKY[i]; b.fillRect(0, y0, BW, y1 - y0); }
+  for (let i = 0; i < 50; i++){ const x = (i * 97) % BW, y = (i * 53) % 70; b.fillStyle = Math.sin(t * 3 + i) > 0 ? N.white : N.pink; b.fillRect(x, y, 1, 1); }
+  const SUN = [N.yellow, '#ffd24a', '#ffb13d', N.orange, '#ff6a5a', '#ff4d7a', N.mag];
+  for (let y = -34; y <= 34; y++){
+    const yy = R(sunY + y); if (yy >= hz) break; const w = R(Math.sqrt(34 * 34 - y * y));
+    if (y > 0 && (y % 7) < Math.min(4, 1 + y / 9)) continue;
+    b.fillStyle = SUN[clamp(Math.floor((y + 34) / 68 * SUN.length), 0, SUN.length - 1)]; b.fillRect(160 - w, yy, w * 2, 1);
+  }
+  for (const [off, amp, fill, edge] of [[3, 34, '#2a0845', '#b84dff'], [9, 22, '#1a0433', N.cyan]]){
+    let prev = null;
+    for (let x = 0; x <= BW; x++){ const h = R(amp * (.35 + .65 * Math.abs(Math.sin(x * .031 + off) * Math.cos(x * .017 + off * 2)))); b.fillStyle = fill; b.fillRect(x, hz - h, 1, h);
+      b.fillStyle = edge; b.fillRect(x, hz - h, 1, 1); if (prev !== null && Math.abs(prev - h) > 1){ b.fillRect(x, hz - Math.max(prev, h), 1, Math.abs(prev - h)); } prev = h; }
+  }
+  b.fillStyle = N.void; b.fillRect(0, hz, BW, BH - hz);
+  for (let i = -24; i <= 24; i++) pxLine(160 + i * 6, hz, 160 + i * 60, BH, i % 4 ? '#8a1a6a' : N.mag);
+  const off = (t * 1.1) % 1; for (let k = 0; k < 16; k++){ const z = k + 1 - off, y = R(hz + 60 / z); if (y >= BH) continue; b.fillStyle = N.mag; b.fillRect(0, y, BW, 1); }
+  b.fillStyle = N.pink; b.fillRect(0, hz, BW, 1);
+}
+
+/* ---------- neon pixel world map ---------- */
+const LAND = [
+  // North America
+  [[-165,60],[-168,66],[-162,70],[-150,71],[-140,70],[-128,70],[-115,68],[-110,68],[-96,68],[-94,62],[-92,58],[-86,55.5],[-82,55],[-79,52],[-78,56],[-78,62],[-72,62],[-65,60],[-62,56],[-56,52],[-60,47],[-66,44],[-70,42],[-74,40],[-76,35],[-81,31],[-80,26],[-81,25],[-82,27],[-84,30],[-89,30],[-94,29],[-97,26],[-97,21],[-95,18.5],[-91,19],[-90,21],[-87,21.5],[-88,16],[-84,15],[-83,10],[-80,9],[-77,8],[-80,7],[-84,9],[-86,12],[-92,15],[-97,16],[-105,20],[-112,28],[-117,32],[-120,34.5],[-124,40],[-124,46],[-125,49],[-130,54],[-135,58],[-140,60],[-146,61],[-152,59],[-157,57],[-162,55],[-160,58]],
+  [[-125,72],[-110,77],[-90,80],[-65,82],[-62,78],[-75,74],[-65,68],[-75,64],[-85,66],[-90,70],[-110,72]],
+  [[-55,60],[-45,60],[-20,70],[-20,80],[-40,83],[-60,80],[-70,77],[-55,70]],
+  [[-85,22],[-78,23],[-74,20],[-78,20],[-82,22]],
+  [[-24,64],[-14,64],[-14,66],[-22,66]],
+  // South America
+  [[-77,8],[-72,12],[-62,10],[-52,5],[-35,-5],[-35,-9],[-39,-15],[-41,-22],[-48,-26],[-53,-34],[-58,-38],[-62,-39],[-65,-45],[-68,-51],[-69,-52],[-74,-53],[-75,-50],[-73,-40],[-71,-30],[-70,-18],[-76,-14],[-81,-6],[-80,0],[-78,4]],
+  [[-69,-53],[-66,-55],[-71,-55],[-74,-53.8]],
+  // Europe + Asia
+  [[-9,37],[-9,43],[-2,43.5],[-4.5,48],[-1,49.5],[2,51],[5,53],[8,54],[10,54],[14,54],[20,55],[24,57],[28,60],[30,60],[32,68],[40,67],[45,68],[60,69],[70,73],[80,73],[100,77],[113,74],[130,71],[150,71],[170,70],[180,66],[175,62],[165,60],[160,55],[156,51],[155,56],[150,59],[140,59],[137,54],[141,52],[140,48],[135,43],[130,42],[129,36],[126,35],[126,38],[125,40],[122,40],[121,37],[119,37],[121,32],[121,28],[117,23],[110,21],[108,21],[106,18],[109,15],[109,11],[105,9],[103,10],[100,13],[100,8],[103,4],[104,1.3],[100,3],[98,8],[98,16],[94,16],[92,21],[88,22],[86,20],[80,15],[80,10],[77,8],[73,16],[72,21],[70,23],[67,24],[62,25],[57,26],[56,27],[52,28],[50,30],[48,30],[50,26],[51,24],[55,24],[57,24],[59,22],[57,19],[52,16],[45,13],[43,13],[42,16],[39,21],[35,28],[34,31],[35,33],[36,36],[30,36],[27,37],[26,40],[23,40],[22,37],[21,39],[19,42],[16,43],[13,45],[12,44],[14,42],[16,41],[18,40],[16,38],[15,40],[12,42],[10,44],[7,44],[3,43],[3,42],[0,39],[-1,37],[-5,36]],
+  [[5,58],[5,61],[8,63],[14,67],[18,69.5],[25,71],[31,70],[30,66],[25,65.5],[21,63],[18,60],[16,56],[13,55.5],[11,58],[8,58]],
+  [[-5,50],[1,51],[2,53],[-2,56],[-3,58.5],[-6,58],[-5,54],[-4,52]], [[-10,52],[-6,52],[-6,55],[-8,55]],
+  [[130,31],[135,34],[140,35],[142,40],[141,45],[140,41],[136,36],[131,34]],
+  [[120,18],[122,18],[126,7],[122,7],[120,12]],
+  [[109,1],[117,7],[119,1],[116,-4],[110,-3]], [[95,5],[98,4],[106,-6],[102,-4]],
+  [[131,-1],[141,-3],[150,-10],[141,-9],[137,-5]], [[119,-9],[127,-8],[125,-10],[119,-10]],
+  // Africa
+  [[-6,36],[-10,30],[-13,27],[-17,21],[-17,15],[-15,10],[-12,7],[-8,4.5],[-2,5],[5,6],[9,4],[9.5,2],[10,-2],[12,-6],[13,-12],[12,-18],[15,-27],[18,-34],[20,-35],[25,-34],[28,-33],[32,-29],[33,-26],[35,-24],[35,-20],[40,-16],[40,-11],[39,-5],[41,-1],[45,2],[48,5],[51,11],[44,11],[43,12],[39,16],[37,20],[35,24],[34,27],[32,31],[29,31],[25,32],[20,31],[19,30],[15,32],[11,33],[10,37],[3,37],[-2,35]],
+  [[44,-25],[47,-25],[50,-15],[49,-12],[44,-17]],
+  // Oceania
+  [[114,-22],[114,-34],[118,-35],[123,-34],[129,-32],[135,-35],[139,-37],[146,-39],[150,-37],[153,-30],[153,-25],[146,-19],[145,-15],[142,-11],[141,-17],[137,-12],[131,-11],[126,-14],[122,-18]],
+  [[172,-35],[178,-38],[174,-41],[167,-46],[171,-44]],
+];
+const MX = 160, MY = 70, MH = MY * 2, MTOP = 10, LAT0 = 80, LATS = 140;
+const px = lon => ((((lon + 180) % 360) + 360) % 360) / 360 * BW;
+const py = lat => (LAT0 - lat) / LATS * MH;                 // map-local y
+const mapCv = document.createElement('canvas'); mapCv.width = BW; mapCv.height = MH;
+const layer = document.createElement('canvas'); layer.width = BW; layer.height = MH; const ly = layer.getContext('2d');
+(function buildMap(){
+  const g = document.createElement('canvas'); g.width = MX; g.height = MY; const gx = g.getContext('2d'); gx.fillStyle = '#fff';
+  for (const poly of LAND){ gx.beginPath(); poly.forEach(([lo, la], i) => { const x = (lo + 180) / 360 * MX, y = (LAT0 - la) / LATS * MY; i ? gx.lineTo(x, y) : gx.moveTo(x, y); }); gx.closePath(); gx.fill(); }
+  const d = gx.getImageData(0, 0, MX, MY).data, land = (x, y) => x >= 0 && x < MX && y >= 0 && y < MY && d[(y * MX + x) * 4 + 3] > 110;
+  const m = mapCv.getContext('2d'); m.fillStyle = N.deep; m.fillRect(0, 0, BW, MH);
+  for (let y = 0; y < MH; y += 8) for (let x = 0; x < BW; x += 8){ m.fillStyle = N.purple; m.fillRect(x, y, 1, 1); }
+  for (let y = 0; y < MY; y++) for (let x = 0; x < MX; x++){
+    if (!land(x, y)) continue;
+    const coast = !land(x - 1, y) || !land(x + 1, y) || !land(x, y - 1) || !land(x, y + 1);
+    m.fillStyle = coast ? N.cyan : '#1a0a3a'; m.fillRect(x * 2, y * 2, 2, 2);
+    if (!coast && (x + y) % 3 === 0){ m.fillStyle = N.dim; m.fillRect(x * 2, y * 2, 1, 1); }
+  }
+})();
+
+/* ---------- cables (unwrapped lon so routes can cross 180°) ---------- */
+const CABLES = {
+  tele:[[-10.3, 51.9], [-30, 53], [-53.5, 47.9]],
+  tat8:[[-74.3, 39.6], [-50, 44], [-20, 48], [-8, 49], [-4.6, 50.8]],
+  tat8b:[[-8, 49], [-4.4, 47.8]],
+  marea:[[-76, 36.8], [-50, 39], [-20, 42], [-3, 43.4]],
+};
+const WORLD = [
+  [[-122.5, 37.5], [-140, 30], [-157.9, 21.3], [-190, 30], [-220, 34.5]],
+  [[-8.9, 38.7], [-5.5, 36], [12, 37], [32, 31.5], [34, 27], [43, 13], [55, 15], [72, 9], [80, 5], [95, 5], [103.8, 1.3], [110, 12], [114, 22]],
+  [[-8.9, 38.7], [-17, 28], [-17.5, 14.7], [-5, 4], [3.4, 6.4], [9, -10], [18.4, -33.9]],
+  [[18.4, -33.9], [32, -30], [40, -12], [39.7, -4], [45, 10], [43, 12.5]],
+  [[-80, 26], [-70, 18], [-50, 5], [-38.5, -3.7], [-43, -23]],
+  [[-38.5, -3.7], [-25, 15], [-15, 30], [-8.9, 37.9]],
+  [[151.2, -33.9], [175, -15], [202.1, 21.3]],
+  [[115.8, -32], [105, -10], [103.8, 1.3]],
+  [[114, 22], [125, 28], [140, 35]],
+  [[-74, 40.5], [-60, 25], [-66, 18]],
+  [[72, 19], [60, 22], [56, 25]],
+];
+const len = pts => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]); return s; };
+function along(pts, u){ let d = u * len(pts); for (let i = 1; i < pts.length; i++){ const s = Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]); if (d <= s || i === pts.length - 1){ const k = s ? clamp(d / s) : 0; return [lerp(pts[i-1][0], pts[i][0], k), lerp(pts[i-1][1], pts[i][1], k)]; } d -= s; } }
+function drawCable(pts, p, col, dash = false){
+  if (p <= 0) return; const n = Math.ceil(len(pts) * 1.6);
+  for (let k = 0; k <= n * p; k++){ if (dash && (k % 4) > 1) continue; const [lo, la] = along(pts, k / n); ly.fillStyle = col; ly.fillRect(R(px(lo)), R(py(la)), 1, 1); }
+}
+function pulses(pts, t, speed, col, count = 3){
+  for (let i = 0; i < count; i++){ const u = ((t * speed / len(pts) * 40) + i / count) % 1; const [lo, la] = along(pts, u); ly.fillStyle = col; ly.fillRect(R(px(lo)) - 1, R(py(la)), 3, 1); ly.fillRect(R(px(lo)), R(py(la)) - 1, 1, 3); }
+}
+function landing(lo, la, col, t){ const x = R(px(lo)), y = R(py(la)); ly.fillStyle = col; ly.fillRect(x - 1, y - 1, 3, 3); if (Math.sin(t * 8) > 0){ ly.fillStyle = N.white; ly.fillRect(x, y, 1, 1); } }
+
+const EVENTS = [
+  { at:3.4, year:'1858', t:['1858 - TELEGRAPH', 'IRELAND > NEWFOUNDLAND', 'FIRST TRANSATLANTIC CABLE'] },
+  { at:5.0, year:'1858', t:['1858 - TELEGRAPH', 'IRELAND > NEWFOUNDLAND', 'IT WORKED FOR ABOUT 3 WEEKS'] },
+  { at:5.8, year:'1988', t:['1988 - TAT-8', 'USA > UK + FRANCE', 'FIRST TRANSATLANTIC FIBER-OPTIC CABLE'] },
+  { at:8.4, year:'2017', t:['2017 - MAREA', 'VIRGINIA BEACH > BILBAO', '160 TBPS DESIGN CAPACITY'] },
+  { at:10.8, year:'NOW', t:['TODAY', 'HUNDREDS OF CABLES CIRCLE THE PLANET', '(ROUTES SHOWN ARE ILLUSTRATIVE)'] },
+  { at:13.2, year:'NOW', t:['PING!', 'NEW YORK > LONDON IN ~0.03 SECONDS', 'LIGHT IN GLASS: ~200,000 KM/S'] },
+];
+function composeMap(t){
+  ly.drawImage(mapCv, 0, 0);
+  const ph = Math.floor(t * 5); ly.fillStyle = '#5a1f8a'; for (let y = 4; y < MH; y += 8) for (let x = (y * 3 + ph * 8) % 40; x < BW; x += 40) ly.fillRect(x, y, 2, 1);
+  // 1858: lays, then dies
+  const dead = t > 5.0;
+  drawCable(CABLES.tele, seg(t, 3.6, 4.6), dead ? '#7a2250' : (Math.sin(t * 30) > -.3 ? N.yellow : N.orange), dead);
+  if (t > 3.6 && !dead) pulses(CABLES.tele, t, .6, N.white, 2);
+  // 1988 TAT-8
+  const p8 = seg(t, 6.0, 7.2); drawCable(CABLES.tat8, p8, N.mag); drawCable(CABLES.tat8b, seg(t, 7.0, 7.4), N.mag);
+  if (p8 >= 1) pulses(CABLES.tat8, t, 1, N.pink, 3);
+  // 2017 MAREA
+  const pm = seg(t, 8.6, 9.6); drawCable(CABLES.marea, pm, N.cyan); if (pm >= 1) pulses(CABLES.marea, t, 1.6, N.ice, 4);
+  // today: the world wires up
+  WORLD.forEach((c, i) => { const p = seg(t, 11.0 + i * .12, 11.6 + i * .12); drawCable(c, p, i % 2 ? N.mag : N.cyan); if (p >= 1) pulses(c, t, 1.2, N.white, 2); });
+  // ping NY ⇄ London
+  if (t > 13.3 && t < 15.3){ const u = ((t - 13.3) / .9) % 2, v = u < 1 ? u : 2 - u, [lo, la] = along(CABLES.tat8, v); const x = R(px(lo)), y = R(py(la));
+    ly.fillStyle = N.white; ly.fillRect(x - 2, y, 5, 1); ly.fillRect(x, y - 2, 1, 5); ly.fillStyle = N.yellow; ly.fillRect(x - 1, y - 1, 3, 3); }
+  const L = [];
+  if (t > 3.6) L.push([-10.3, 51.9, N.yellow], [-53.5, 47.9, N.yellow]);
+  if (t > 6.0) L.push([-74.3, 39.6, N.mag], [-4.6, 50.8, N.mag], [-4.4, 47.8, N.mag]);
+  if (t > 8.6) L.push([-76, 36.8, N.cyan], [-3, 43.4, N.cyan]);
+  L.forEach(([lo, la, c]) => landing(lo, la, c, t));
+}
+function drawTilted(k){
+  if (k <= 0){ b.drawImage(layer, 0, MTOP); return; }
+  const th = k * 1.35, f = 200, base = MTOP + MH;
+  let prevY = null;
+  for (let r = MH - 1; r >= 0; r--){
+    const d = MH - r, Y = d * Math.cos(th), Z = d * Math.sin(th), s = f / (f + Z), y = base - Y * s - (k * 38);
+    const h = prevY === null ? 1 : Math.max(1, Math.ceil(prevY - y)); prevY = y;
+    b.drawImage(layer, 0, r, BW, 1, 160 - 160 * s, Math.floor(y), BW * s, h);
+  }
+}
+
+/* ---------- scenes ---------- */
+function title(t){
+  synth(t, lerp(128, 70, eIO(seg(t, 0, 1.4))));
+  const on = t > .5 && !(t > .7 && t < .78) && !(t > .9 && t < .95);
+  if (on){ pxText('THE INTERNET', 160, 16, N.ice, 2, 'center', N.mag); pxText('UNDER THE SEA', 160, 36, N.ice, 2, 'center', N.mag); }
+  if (t > 1.2){ b.fillStyle = N.void; b.fillRect(40, 120, 240, 12); b.fillStyle = N.mag; b.fillRect(40, 120, 240, 1); b.fillRect(40, 131, 240, 1); pxText('A NEON PIXEL HISTORY OF SUBSEA CABLES', 160, 123, N.ice, 1, 'center'); }
+  if (Math.floor(t * 3) % 2 === 0 && t > 1.4) pxText('PRESS START', 160, 150, N.white, 1, 'center');
+}
+function mapScene(t){
+  b.fillStyle = N.void; b.fillRect(0, 0, BW, BH);
+  composeMap(t);
+  const kIn = 1 - eIO(seg(t, 2.5, 3.3)), kOut = eIO(seg(t, 15.3, 15.9)), k = Math.max(kIn, kOut);
+  if (k > 0){ synth(t, 70); b.globalAlpha = 1 - k * .15; drawTilted(k); b.globalAlpha = 1; }
+  else drawTilted(0);
+  if (k < .5){
+    b.fillStyle = N.void; b.fillRect(0, 0, BW, MTOP); b.fillStyle = N.mag; b.fillRect(0, MTOP - 1, BW, 1);
+    pxText('SUBSEA CABLES', 4, 2, N.ice);
+    let ev = -1; EVENTS.forEach((e, i) => { if (t >= e.at) ev = i; });
+    pxText('YEAR ' + (ev >= 0 ? EVENTS[ev].year : '----'), 316, 2, N.yellow, 1, 'right');
+    const py0 = MTOP + MH; b.fillStyle = '#12002b'; b.fillRect(0, py0, BW, BH - py0); b.fillStyle = N.mag; b.fillRect(0, py0, BW, 1);
+    if (ev >= 0){ const e = EVENTS[ev], n = Math.floor((t - e.at) * 80); let used = 0;
+      const typed = e.t.map(l => { const q = clamp(n - used, 0, l.length); used += l.length; return l.slice(0, q); });
+      pxText(typed[0], 5, py0 + 4, N.yellow); pxText(typed[1], 5, py0 + 13, N.ice); pxText(typed[2], 5, py0 + 22, N.pink); }
+  }
+}
+function endScene(t){
+  const u = t - 16;
+  synth(t, 70);
+  b.fillStyle = 'rgba(5,1,13,.35)'; b.fillRect(0, 0, BW, 112);
+  pxText('UNDER THE SEA,', 160, 10, N.ice, 2, 'center', N.mag);
+  if (u > .5) pxText('NOT IN SPACE', 160, 30, N.yellow, 2, 'center', N.mag);
+  if (u > 1.0){ pxText('MOST INTERNET TRAFFIC BETWEEN CONTINENTS', 160, 54, N.white, 1, 'center'); pxText('TRAVELS THROUGH UNDERSEA CABLES', 160, 64, N.white, 1, 'center'); }
+  [['1858', 'TELEGRAPH', N.yellow], ['1988', 'FIBER', N.mag], ['2017', '160 TBPS', N.cyan]].forEach(([y, l, c], i) => {
+    if (u < 1.6 + i * .3) return; const x = 55 + i * 105;
+    b.fillStyle = N.void; b.fillRect(x - 40, 122, 80, 38); b.fillStyle = c; b.fillRect(x - 40, 122, 80, 1); b.fillRect(x - 40, 159, 80, 1); b.fillRect(x - 40, 122, 1, 38); b.fillRect(x + 39, 122, 1, 38);
+    pxText(y, x, 127, c, 2, 'center'); pxText(l, x, 147, N.white, 1, 'center'); });
+  pxText('STYLE SAMPLE', 4, 170, N.pink);
+}
+
+/* ---------- render: pixel buffer → crisp upscale → bloom → scanlines ---------- */
+function render(t){
+  b.imageSmoothingEnabled = false;
+  if (t < 2.5) title(t); else if (t < 16) mapScene(t); else endScene(t);
+  if (t < .3 || t > 19.6){ b.fillStyle = `rgba(5,1,13,${t < .3 ? 1 - t / .3 : (t - 19.6) / .4})`; b.fillRect(0, 0, BW, BH); }
+  if (t > 15.9 && t < 16.2){ b.fillStyle = `rgba(255,255,255,${1 - (t - 15.9) / .3})`; b.fillRect(0, 0, BW, BH); }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  bl.imageSmoothingEnabled = true; bl.clearRect(0, 0, 80, 45); bl.drawImage(buf, 0, 0, 80, 45);
+  ctx.imageSmoothingEnabled = true; ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .55; ctx.drawImage(bloomCv, 0, 0, cv.width, cv.height);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.22)'; for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .7), cv.width, Math.max(1, R(s * .3)));
+  const g = ctx.createRadialGradient(cv.width / 2, cv.height / 2, cv.height * .35, cv.width / 2, cv.height / 2, cv.height * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.45)'); ctx.fillStyle = g; ctx.fillRect(0, 0, cv.width, cv.height);
+}
+function resize(){ const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px'; cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr); }
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now; if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
