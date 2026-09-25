@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixel Data Story</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b14;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="16 second style sample: a pixel-art robot runs through a platformer timeline of web browsers, then the data becomes a brick bar chart."></canvas>
+<script>
+'use strict';
+/* Style sample: infographic / data story × retro pixel art (16 s loop).
+   Everything is drawn into a 320×180 buffer, then scaled up with no smoothing.
+   Click = pause. ?t=5 opens paused at 5 s. */
+const BW = 320, BH = 180, DUR = 16;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH;
+const b = buf.getContext('2d');
+
+// PICO-8 palette
+const C = { black:'#000000', navy:'#1d2b53', plum:'#7e2553', green:'#008751', brown:'#ab5236', dgray:'#5f574f',
+  lgray:'#c2c3c7', white:'#fff1e8', red:'#ff004d', orange:'#ffa300', yellow:'#ffec27', lime:'#00e436',
+  blue:'#29adff', lav:'#83769c', pink:'#ff77a8', peach:'#ffccaa' };
+
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const R = Math.round;
+
+/* ---------- 5×7 bitmap font ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x;
+  x0 = R(x0); y = R(y);
+  if (shadow) pxText(s, x0 + sc, y + sc, shadow, sc);
+  b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue;
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+
+/* ---------- sprites ---------- */
+const ROBO = [
+'.......yy.......','.......yy.......','........k.......','.......k........',
+'..kkkkkkkkkkkk..','.krrrrrrrrrrrrk.','.krwwwwwwwwwwrk.','.krwkwwwwwwkwrk.',
+'.krwkwwwwwwkwrk.','.krwpwkwwkwpwrk.','.krwwwwkkwwwwrk.','kkrrrrrrrrrrrrkk',
+'.krrymbrrrrrrrk.','..kkkkkkkkkkkk..','...kdk....kdk...','...kkk....kkk...'];
+const ROBO_LEGS2 = ['..kdk......kdk..', '..kkk......kkk..'];
+const SPAL = { k:C.black, r:C.red, w:C.white, y:C.yellow, p:C.pink, m:C.lime, b:C.blue, d:C.plum };
+function sprite(rows, x, y, sc = 1, frame = 0){
+  x = R(x); y = R(y);
+  for (let r = 0; r < 16; r++){
+    const row = (frame && r >= 14) ? ROBO_LEGS2[r - 14] : rows[r];
+    for (let c = 0; c < 16; c++){ const k = row[c]; if (k === '.') continue; b.fillStyle = SPAL[k]; b.fillRect(x + c * sc, y + r * sc, sc, sc); }
+  }
+}
+function pxCircle(cx, cy, r, col){ b.fillStyle = col; for (let y = -r; y <= r; y++){ const w = R(Math.sqrt(r * r - y * y)); b.fillRect(R(cx - w), R(cy + y), w * 2, 1); } }
+function cloud(x, y){ x = R(x); pxCircle(x, y, 7, C.white); pxCircle(x + 9, y - 4, 9, C.white); pxCircle(x + 20, y, 7, C.white); b.fillRect(x - 7, y, 34, 7); }
+function groundTile(x, y){
+  x = R(x); b.fillStyle = C.brown; b.fillRect(x, y, 16, 30);
+  b.fillStyle = C.lime; b.fillRect(x, y, 16, 3); b.fillStyle = C.green; b.fillRect(x, y + 3, 16, 1);
+  b.fillStyle = C.plum; b.fillRect(x, y + 11, 16, 1); b.fillRect(x, y + 19, 16, 1); b.fillRect(x + 7, y + 4, 1, 7); b.fillRect(x + 3, y + 12, 1, 7); b.fillRect(x + 11, y + 20, 1, 10);
+}
+function qBlock(x, y, used){
+  x = R(x); y = R(y);
+  b.fillStyle = C.black; b.fillRect(x, y, 16, 16);
+  b.fillStyle = used ? C.brown : C.orange; b.fillRect(x + 1, y + 1, 14, 14);
+  if (!used){ b.fillStyle = C.yellow; b.fillRect(x + 1, y + 1, 14, 2); pxText('?', x + 5, y + 4, C.plum); }
+  else { b.fillStyle = C.plum; for (const [px, py] of [[2, 2], [12, 2], [2, 12], [12, 12]]) b.fillRect(x + px, y + py, 2, 2); }
+}
+function coin(x, y, t){ const w = Math.max(1, R(Math.abs(Math.cos(t * 12)) * 4)); b.fillStyle = C.yellow; b.fillRect(R(x - w), R(y - 6), w * 2, 12); b.fillStyle = C.orange; b.fillRect(R(x - w), R(y + 4), w * 2, 2); }
+function stars(t, n = 40){
+  for (let i = 0; i < n; i++){ const x = (i * 97) % BW, y = (i * 53) % 130 + 4, on = Math.sin(t * 3 + i * 1.7) > -.2;
+    b.fillStyle = on ? C.white : C.lav; b.fillRect(x, y, 1, 1); }
+}
+function iris(r, cx, cy){ if (r > 400) return; b.fillStyle = C.black; b.beginPath(); b.rect(0, 0, BW, BH); b.arc(cx, cy, Math.max(0, r), 0, Math.PI * 2, true); b.fill('evenodd'); }
+
+/* ---------- data (accurate first-release years) ---------- */
+const BROWSERS = [[1990, 'WorldWideWeb', 'WWW'], [1993, 'Mosaic', 'MOS'], [1994, 'Netscape', 'NET'], [1995, 'Internet Explorer', 'IE'],
+  [2003, 'Safari', 'SAF'], [2004, 'Firefox', 'FF'], [2008, 'Chrome', 'CHR'], [2015, 'Edge', 'EDG']];
+
+/* ---------- scene 1: title (0–2 s) ---------- */
+function title(t){
+  b.fillStyle = C.navy; b.fillRect(0, 0, BW, BH); stars(t);
+  pxText('A PIXEL HISTORY', 160, 34, C.yellow, 2, 'center', C.red);
+  pxText('OF WEB BROWSERS', 160, 56, C.yellow, 2, 'center', C.red);
+  const hop = Math.abs(Math.sin(t * 5)) * 8;
+  sprite(ROBO, 144, 116 - hop, 2, Math.floor(t * 6) % 2);
+  b.fillStyle = C.green; b.fillRect(0, 150, BW, 30); b.fillStyle = C.lime; b.fillRect(0, 150, BW, 3);
+  if (Math.floor(t * 3) % 2 === 0) pxText('PRESS START', 160, 162, C.white, 1, 'center');
+  pxText('STYLE SAMPLE', 4, 4, C.lav);
+  iris(t < .35 ? t / .35 * 200 : 999, 160, 90);
+  if (t > 1.7) iris((2 - t) / .3 * 200, 160, 124);
+}
+
+/* ---------- scene 2: platformer timeline (2–12 s) ---------- */
+const SPEED = 92, X0 = 40, bx = i => 120 + i * 110;
+const jumpT = i => 2 + (bx(i) - 15 - X0) / SPEED, hitT = i => jumpT(i) + .25;
+function platformer(T){
+  const t = T - 2, rx = X0 + SPEED * t, cam = Math.max(0, rx - 80);
+  let jy = 0, airborne = false;
+  BROWSERS.forEach((_, i) => { const u = (T - jumpT(i)) / .5; if (u >= 0 && u <= 1){ jy = -4 * 36 * u * (1 - u); airborne = true; } });
+  // sky, parallax hills + clouds
+  b.fillStyle = C.blue; b.fillRect(0, 0, BW, BH);
+  b.fillStyle = '#5cc3ff'; for (let y = 0; y < 90; y += 2) if (y % 4 === 0) b.fillRect(0, y + 60, BW, 1);
+  for (let k = -1; k < 8; k++){ const x = k * 90 - (cam * .5) % 90; pxCircle(x + 40, 150, 34, C.green); pxCircle(x + 40, 150, 30, '#00a35f'); }
+  for (let k = -1; k < 6; k++){ const x = k * 120 - (cam * .25) % 120; cloud(x + 30, 38 + (k % 2) * 16); }
+  // ground
+  for (let x = -((cam) % 16) - 16; x < BW + 16; x += 16) groundTile(x, 150);
+  // blocks, coins, cards
+  let hits = 0, last = -1;
+  BROWSERS.forEach(([yr, name], i) => {
+    const hx = bx(i) - cam, th = hitT(i), hit = T >= th;
+    if (hit){ hits++; last = i; }
+    if (hx < -40 || hx > BW + 40) return;
+    const bump = (T >= th && T < th + .15) ? -3 : 0;
+    qBlock(hx, 82 + bump, hit);
+    if (T >= th && T < th + .6){ const u = (T - th) / .6; coin(hx + 8, 74 - u * 26, T); }
+  });
+  if (last >= 0){
+    const [yr, name] = BROWSERS[last], u = eOut(seg(T, hitT(last), hitT(last) + .25));
+    const w = Math.max(textW(name), textW(String(yr), 2)) + 12, cx = bx(last) + 8 - cam, cy = R(lerp(70, 34, u));
+    if (u > 0){
+      b.fillStyle = C.black; b.fillRect(R(cx - w / 2) - 1, cy - 1, w + 2, 32);
+      b.fillStyle = C.navy; b.fillRect(R(cx - w / 2), cy, w, 30);
+      pxText(String(yr), cx, cy + 4, C.yellow, 2, 'center');
+      pxText(name, cx, cy + 21, C.white, 1, 'center');
+    }
+  }
+  sprite(ROBO, rx - cam - 8, 134 + jy, 1, airborne ? 1 : Math.floor(T * 10) % 2);
+  // HUD: year, proportional timeline, count
+  b.fillStyle = C.black; b.fillRect(0, 0, BW, 17);
+  pxText('YEAR ' + (last >= 0 ? BROWSERS[last][0] : '----'), 4, 5, C.white);
+  const tx0 = 76, tx1 = 236, px = y => R(lerp(tx0, tx1, (y - 1990) / 25));
+  b.fillStyle = C.dgray; b.fillRect(tx0, 8, tx1 - tx0, 1);
+  BROWSERS.forEach(([yr], i) => { b.fillStyle = i < hits ? C.yellow : C.dgray; b.fillRect(px(yr) - 1, 5, 3, 7); });
+  pxText('FOUND ' + hits + '/8', 316, 5, C.yellow, 1, 'right');
+  const sx = rx - cam, sy = 142 + jy;
+  if (T < 2.35) iris((T - 2) / .35 * 200, sx, sy);
+  if (T > 11.7) iris((12 - T) / .3 * 200, sx, sy);
+}
+
+/* ---------- scene 3: brick bar chart (12–16 s) ---------- */
+const BARS = [['1990S', 90], ['2000S', 160], ['2010S', 230]];
+const decade = y => y < 2000 ? 0 : y < 2010 ? 1 : 2;
+function chart(T){
+  const t = T - 12;
+  b.fillStyle = C.navy; b.fillRect(0, 0, BW, BH); stars(T, 30);
+  pxText('BROWSERS BY DECADE', 160, 10, C.yellow, 1, 'center', C.red);
+  pxText('(COUNTED FROM THIS TIMELINE)', 160, 22, C.lav, 1, 'center');
+  for (let x = 0; x < BW; x += 16) groundTile(x, 150);
+  BARS.forEach(([lab, x]) => pxText(lab, x, 162, C.white, 1, 'center', C.black));
+  const heights = [0, 0, 0], counts = [0, 0, 0];
+  BROWSERS.forEach(([yr], k) => counts[decade(yr)]++);
+  BROWSERS.forEach(([yr, name, abbr], k) => {
+    const d = decade(yr), h = heights[d]++, tb = .2 + k * .2;
+    if (t < tb) return;
+    const u = seg(t, tb, tb + .25), target = 150 - (h + 1) * 16, y = R(lerp(-20, target, u * u)) - (u >= 1 && t < tb + .32 ? 1 : 0);
+    const x = BARS[d][1] - 12;
+    b.fillStyle = C.black; b.fillRect(x, y, 24, 16);
+    b.fillStyle = C.orange; b.fillRect(x + 1, y + 1, 22, 14); b.fillStyle = C.yellow; b.fillRect(x + 1, y + 1, 22, 2);
+    pxText(abbr, x + 12, y + 5, C.plum, 1, 'center');
+  });
+  BARS.forEach(([lab, x], d) => { const done = .2 + BROWSERS.reduce((m, br, k) => decade(br[0]) === d ? k : m, 0) * .2 + .3;
+    if (t > done) pxText(String(counts[d]), x, 150 - counts[d] * 16 - 18, C.white, 2, 'center', C.black); });
+  const u = seg(t, 1.8, 2.6), top = 150 - 4 * 16 - 16;
+  const rx = lerp(-16, 82, u), ry = t < 2.6 ? lerp(134, top, eOut(u)) - Math.sin(u * Math.PI) * 22 : top - Math.abs(Math.sin(t * 6)) * 4;
+  sprite(ROBO, rx, ry, 1, t < 2.6 ? Math.floor(T * 10) % 2 : 0);
+  if (t > 2.8){
+    if (Math.floor(t * 4) % 2 === 0 || t > 3.3) pxText('GAME CLEAR!', 196, 56, C.yellow, 2, 'center', C.red);
+    for (let i = 0; i < 24; i++){ const x = (i * 71) % BW, y = ((t - 2.8) * (40 + i * 3) + i * 13) % 150, cols = [C.red, C.yellow, C.lime, C.blue, C.pink];
+      b.fillStyle = cols[i % 5]; b.fillRect(x, R(y), 2, 2); }
+  }
+  if (t < .3) iris(t / .3 * 200, 160, 90);
+  if (t > 3.7) iris((4 - t) / .3 * 200, R(rx + 8), R(ry + 8));
+}
+
+/* ---------- render + playback ---------- */
+function render(T){
+  b.imageSmoothingEnabled = false;
+  if (T < 2) title(T); else if (T < 12) platformer(T); else chart(T);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.14)';
+  for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+}
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px';
+  cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr);
+}
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
