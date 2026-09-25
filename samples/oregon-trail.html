@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Westward on the Oregon Trail</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e0a07;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="60 second pixel-art animation of a pioneer, his ox and a covered wagon travelling the Oregon Trail from Independence, Missouri to Oregon."></canvas>
+<script>
+'use strict';
+/* Westward — the Oregon Trail in pixel art (60 s loop).
+   A man, his ox and a covered wagon: Independence MO → Kansas River → the plains → Chimney Rock →
+   Independence Rock → campfire → Rockies (up, then very much down) → Oregon, and the first snow.
+   Everything is drawn into a 320×180 buffer and scaled up crisp.
+   Click / space = pause · ← → = previous / next scene · ?t=40 opens paused at 40 s */
+const BW = 320, BH = 180;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH; const b = buf.getContext('2d');
+const cc = document.createElement('canvas'); cc.width = 110; cc.height = 64; const c2 = cc.getContext('2d');   // sprite canvas for tilted scenes
+
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eIO = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const R = Math.round;
+const hash = (a, c = 0) => { const s = Math.sin(a * 127.1 + c * 311.7) * 43758.5453; return s - Math.floor(s); };
+function noise(id, x){ const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return lerp(hash(id, i), hash(id, i + 1), u); }
+
+const P = { ink:'#1b1410', parch:'#ecd9a8', parchD:'#c9b07a', white:'#fff8ec', snow:'#f4f7ff', red:'#c0392b', yellow:'#ffd23f',
+  wood:'#8b5a2b', woodD:'#5a3a1e', woodL:'#b07a44', canvas:'#f3ead7', canvasD:'#cbbd9c', iron:'#3b2412',
+  oxB:'#8b5a2b', oxD:'#5e3a1a', oxW:'#eadbc2', horn:'#f1e6c8', skin:'#f1c27d', hat:'#6b4423', band:'#3b2412', beard:'#7a4a2a', shirt:'#b83a2e', pants:'#3b5b8a', boot:'#2b1b10' };
+
+/* ---------- pixel helpers (work on any context g) ---------- */
+function px(g, x, y, w, h, c){ g.fillStyle = c; g.fillRect(R(x), R(y), w, h); }
+function line(g, x0, y0, x1, y1, c, th = 1){
+  x0 = R(x0); y0 = R(y0); x1 = R(x1); y1 = R(y1); g.fillStyle = c;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let e = dx + dy;
+  for (let n = 0; n < 800; n++){ g.fillRect(x0, y0, th, th); if (x0 === x1 && y0 === y1) break; const e2 = 2 * e; if (e2 >= dy){ e += dy; x0 += sx; } if (e2 <= dx){ e += dx; y0 += sy; } }
+}
+function disc(g, cx, cy, r, c){ g.fillStyle = c; for (let y = -r; y <= r; y++){ const w = Math.floor(Math.sqrt(r * r - y * y + r * .6)); g.fillRect(R(cx) - w, R(cy) + y, w * 2 + 1, 1); } }
+function bands(y0, y1, cols){ for (let i = 0; i < cols.length; i++){ const a = R(lerp(y0, y1, i / cols.length)), z = R(lerp(y0, y1, (i + 1) / cols.length)); px(b, 0, a, BW, z - a, cols[i]); } }
+
+/* ---------- pixel font ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function txt(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x; x0 = R(x0); y = R(y);
+  if (shadow) txt(s, x0 + sc, y + sc, shadow, sc); b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue; for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+function sfx(s, x, y, sc, fill){ for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-2, -2], [2, 2], [-2, 2], [2, -2], [3, 3]]) txt(s, x + dx, y + dy, P.ink, sc, 'center'); txt(s, x, y, fill, sc, 'center'); }
+function bubble(lines, x, y, tx, ty){
+  const w = Math.max(...lines.map(l => textW(l))) + 10, h = lines.length * 9 + 6; x = R(clamp(x, w / 2 + 2, BW - w / 2 - 2)); const x0 = R(x - w / 2), y0 = R(y - h / 2);
+  for (let k = -5; k <= 5; k++) line(b, x + k, y0 + h - 1, tx, ty, P.white);
+  line(b, x - 6, y0 + h - 1, tx, ty, P.ink); line(b, x + 6, y0 + h - 1, tx, ty, P.ink);
+  px(b, x0 + 1, y0, w - 2, h, P.ink); px(b, x0, y0 + 1, w, h - 2, P.ink); px(b, x0 + 1, y0 + 1, w - 2, h - 2, P.white);
+  for (let k = -5; k <= 5; k++) px(b, x + k, y0 + h - 1, 1, 1, P.white);
+  lines.forEach((l, i) => txt(l, x, y0 + 4 + i * 9, P.ink, 1, 'center'));
+}
+function caption(s){ const w = textW(s) + 8; px(b, 4, 15, w, 12, P.ink); px(b, 5, 16, w - 2, 10, P.parch); txt(s, 8, 18, P.ink); }
+
+/* ---------- the man (and friends): built from rectangles so he can take any pose ---------- */
+function man(g, x, y, o = {}){
+  const f = o.face ?? 1, pose = o.pose || 'walk', t = o.t || 0, ph = pose === 'walk' ? Math.sin(t * 9) : 0;
+  const shirt = o.shirt || P.shirt, pants = o.pants || P.pants, lean = pose === 'push' ? 2 * f : 0, dy = pose === 'push' ? 1 : 0;
+  const sit = pose === 'sit' || pose === 'sing' || pose === 'fiddle';
+  x = R(x); y = R(y);
+  // legs
+  if (sit){ px(g, x - 2, y - 7, 8 * f > 0 ? 7 : 7, 2, pants); if (f < 0) px(g, x - 5, y - 7, 7, 2, pants);
+    const kx = f > 0 ? x + 4 : x - 5; px(g, kx, y - 6, 2, 5, pants); px(g, kx + (f > 0 ? 0 : -1), y - 1, 3, 1, P.boot); }
+  else if (pose !== 'bust'){
+    const o1 = R(ph * 2), o2 = -o1;
+    if (o.dress){ for (let k = 0; k < 7; k++) px(g, x - 3 - (k >> 1), y - 8 + k, 7 + (k >> 1) * 2, 1, o.dress); px(g, x - 2 + o1, y - 1, 2, 1, P.boot); px(g, x + 1 + o2, y - 1, 2, 1, P.boot); }
+    else { px(g, x - 2 + o1, y - 7, 2, 6, pants); px(g, x - 2 + o1 + (f > 0 ? 0 : -1), y - 1, 3, 1, P.boot); px(g, x + 1 + o2, y - 7, 2, 6, pants); px(g, x + 1 + o2 + (f > 0 ? 0 : -1), y - 1, 3, 1, P.boot); }
+  }
+  const ux = x + lean, uy = y + dy - (sit ? 3 : 0);
+  // torso
+  px(g, ux - 3, uy - 14, 6, 7, shirt); px(g, ux - 3, uy - 8, 6, 1, o.dress ? shirt : P.band);
+  if (!o.dress){ px(g, ux - 2, uy - 14, 1, 6, 'rgba(0,0,0,.25)'); }
+  // arms
+  const arm = (x1, y1, x2, y2) => { line(g, x1, y1, x2, y2, shirt, 2); px(g, x2, y2, 2, 2, P.skin); };
+  const sx = ux + (f > 0 ? 0 : -1), sy = uy - 13;
+  if (pose === 'walk') arm(sx, sy, sx + R(-ph * 3) * f, sy + 5);
+  else if (pose === 'push') { arm(sx, sy, sx + 6 * f, sy + 1); arm(sx, sy + 1, sx + 5 * f, sy + 3); }
+  else if (pose === 'cheer' || pose === 'scared') { arm(ux - 3, sy, ux - 5, sy - 6 - (pose === 'scared' ? R(Math.sin(t * 30)) : 0)); arm(ux + 2, sy, ux + 4, sy - 6 + (pose === 'scared' ? R(Math.sin(t * 30)) : 0)); }
+  else if (pose === 'point') arm(sx, sy, sx + 6 * f, sy - 5);
+  else if (pose === 'catch') arm(sx, sy, sx + 5 * f, sy - 1);
+  else if (pose === 'fiddle'){ px(g, sx + 1 * f, sy - 2, 5 * f > 0 ? 5 : 5, 3, P.woodL); if (f < 0) px(g, sx - 5, sy - 2, 5, 3, P.woodL); const bw = R(Math.sin(t * 14) * 3); line(g, sx + (2 + bw) * f, sy + 3, sx + (8 + bw) * f, sy - 4, P.ink); arm(sx, sy, sx + 3 * f, sy + 3); }
+  else arm(sx, sy, sx + 3 * f, sy + 5);
+  // head
+  const hx = ux - 2, hy = uy - 19;
+  px(g, hx, hy, 5, 5, P.skin);
+  if (o.beard !== false && !o.bonnet) px(g, hx, hy + 3, 5, 2, o.beard || P.beard);
+  if (o.hair) px(g, hx + (f > 0 ? 0 : 3), hy, 2, 5, o.hair);
+  const ex = f > 0 ? hx + 3 : hx + 1;
+  if (pose === 'scared'){ px(g, ex - 1, hy, 3, 3, P.white); px(g, ex, hy + 1, 1, 1, P.ink); px(g, ex, hy + 3, 2, 2, P.ink); }
+  else { px(g, ex, hy + 1, 1, 1, P.ink); if (pose === 'sing' && Math.sin(t * 8 + x) > 0) px(g, ex, hy + 3, 1, 2, P.ink); }
+  // hat / bonnet
+  const lift = pose === 'scared' ? 3 + R(Math.abs(Math.sin(t * 20))) : o.hatLift || 0;
+  if (o.bonnet){ px(g, hx - 1, hy - 2, 6, 3, o.bonnet); px(g, hx + (f > 0 ? -1 : 3), hy - 1, 3, 5, o.bonnet); }
+  else if (o.hat !== false){ const hc = o.hat || P.hat; px(g, hx - 2, hy - 1 - lift, 9, 1, hc); px(g, hx, hy - 4 - lift, 5, 3, hc); px(g, hx, hy - 2 - lift, 5, 1, P.band); }
+}
+
+/* ---------- the ox ---------- */
+function ox(g, x, y, o = {}){
+  x = R(x); y = R(y); const t = o.t || 0, walk = o.walk ? Math.sin(t * 9) : 0, head = o.headOnly;
+  if (!head){
+    line(g, x, y - 15, x - 2, y - 8, P.oxD); px(g, x - 3, y - 8, 2, 2, P.ink);
+    const legs = [[2, walk], [6, -walk], [17, -walk], [21, walk]];
+    for (const [lx, w] of legs){ const up = w > .3 ? 1 : 0; px(g, x + lx, y - 7 - up, 2, 6, P.oxD); px(g, x + lx, y - 1 - up, 2, 1, P.ink); }
+    px(g, x, y - 17, 24, 10, P.oxB); px(g, x + 1, y - 9, 22, 2, P.oxD); px(g, x + 6, y - 16, 6, 5, P.oxW); px(g, x + 14, y - 13, 4, 3, P.oxW);
+    if (o.strain){ for (let k = 0; k < 2; k++) if (Math.sin(t * 10 + k * 3) > .4) px(g, x + 30 + k * 3, y - 24 - k * 2, 1, 2, '#9ad1ff'); }
+  }
+  const hx = x + 23, hy = y - 20;
+  px(g, hx, hy, 7, 6, '#7a4a24'); px(g, hx + 5, hy + 3, 3, 3, '#d9b38c'); px(g, hx + 7, hy + 4, 1, 1, P.ink);
+  px(g, hx, hy - 1, 1, 1, P.horn); px(g, hx - 1, hy - 2, 1, 1, P.horn); px(g, hx + 5, hy - 1, 1, 1, P.horn); px(g, hx + 6, hy - 2, 1, 1, P.horn);
+  px(g, hx - 1, hy + 1, 1, 2, '#7a4a24');
+  if (o.eyes === 'x'){ const ex = hx + 3, ey = hy + 1; px(g, ex, ey, 1, 1, P.ink); px(g, ex + 2, ey, 1, 1, P.ink); px(g, ex + 1, ey + 1, 1, 1, P.ink); px(g, ex, ey + 2, 1, 1, P.ink); px(g, ex + 2, ey + 2, 1, 1, P.ink); }
+  else if (o.eyes === 'wide'){ px(g, hx + 3, hy, 3, 3, P.white); px(g, hx + 4, hy + 1, 1, 1, P.ink); px(g, hx + 5, hy + 5, 2, 1, P.ink); }
+  else if (o.eyes === 'sleep'){ px(g, hx + 3, hy + 2, 2, 1, P.ink); }
+  else px(g, hx + 4, hy + 1, 1, 1, P.ink);
+  if (!head && o.yoke !== false){ px(g, x + 21, y - 21, 2, 9, P.woodD); }
+}
+
+/* ---------- the covered wagon ---------- */
+function wheel(g, cx, cy, r, a){
+  for (let k = 0; k < 40; k++){ const t = k / 40 * Math.PI * 2; px(g, cx + Math.cos(t) * r, cy + Math.sin(t) * r, 1, 1, P.iron); }
+  for (let k = 0; k < 4; k++){ const t = a + k / 4 * Math.PI; line(g, cx - Math.cos(t) * (r - 1), cy - Math.sin(t) * (r - 1), cx + Math.cos(t) * (r - 1), cy + Math.sin(t) * (r - 1), P.woodD); }
+  px(g, cx - 1, cy - 1, 2, 2, P.iron);
+}
+function wagon(g, x, y, o = {}){
+  x = R(x); y = R(y); const roll = o.roll || 0, snow = o.snow || 0;
+  // canvas bonnet
+  for (let i = 0; i < 34; i++){ const u = (i - 16.5) / 17.5, h = R(15 * Math.sqrt(Math.max(0, 1 - u * u * u * u))); px(g, x + 2 + i, y - 15 - h, 1, h, i % 8 === 3 ? P.canvasD : P.canvas); px(g, x + 2 + i, y - 16 - h, 1, 1, P.canvasD);
+    if (snow > 0 && hash(i, 4) < snow) px(g, x + 2 + i, y - 17 - h, 1, 2, P.snow); }
+  if (o.passengers) o.passengers(g, x, y);
+  else px(g, x + 33, y - 26, 3, 9, '#6b5a44');
+  // bed
+  px(g, x, y - 15, 38, 7, P.wood); px(g, x, y - 15, 38, 1, P.woodL); px(g, x, y - 9, 38, 1, P.woodD); px(g, x, y - 12, 38, 1, P.woodD);
+  px(g, x - 1, y - 16, 1, 8, P.woodD); px(g, x + 38, y - 16, 1, 8, P.woodD);
+  // tongue
+  if (o.tongue !== false) line(g, x + 38, y - 10, x + 44 + 21, y - 12, P.woodD);
+  wheel(g, x + 9, y - 6, 6, roll / 6); wheel(g, x + 30, y - 5, 5, roll / 5);
+}
+function caravan(g, x, y, o = {}){        // wagon + ox, man beside the ox (or behind, pushing)
+  const t = o.t || 0;
+  if (o.man === 'behind') man(g, x - 5, y, { pose:'push', t, face:1 });
+  wagon(g, x, y, { roll:o.roll, snow:o.snow, passengers:o.passengers });
+  ox(g, x + 44, y, { t, walk:o.walk, eyes:o.oxEyes, strain:o.strain });
+  if (o.man === 'beside') man(g, x + 58, y + 1, { pose:o.pose || (o.walk ? 'walk' : 'stand'), t, face:1, hatLift:o.hatLift });
+}
+
+/* ---------- scenery ---------- */
+function hills(off, base, amp, col, id, scale = .02){ b.fillStyle = col; for (let x = 0; x < BW; x++){ const h = R(amp * noise(id, (x + off) * scale)); b.fillRect(x, base - h, 1, BH - base + h); } }
+function cloud(x, y){ disc(b, x, y, 6, P.white); disc(b, x + 8, y - 3, 8, P.white); disc(b, x + 17, y, 6, P.white); px(b, x - 6, y, 30, 5, P.white); }
+function grass(off, y0, col, dens = 7){ b.fillStyle = col; for (let i = 0; i < 90; i++){ const x = ((hash(i, 2) * 400 - off) % 400 + 400) % 400 - 40, y = y0 + hash(i, 3) * (BH - y0); b.fillRect(R(x), R(y), 1, 2); b.fillRect(R(x) + 2, R(y) + 1, 1, 1); } }
+function pine(x, y, h, snow = 0){
+  x = R(x); y = R(y); px(b, x - 1, y - 6, 3, 6, '#4a3020');
+  for (let k = 0; k < h; k += 2){ const w = R((h - k) * .38) + 1; px(b, x - w, y - 6 - k, w * 2 + 1, 2, k % 6 < 2 ? '#1f5a36' : '#2a7045'); if (snow > 0 && k % 6 === 0 && hash(x + k, 9) < snow * 1.2) px(b, x - w + 1, y - 6 - k, w * 2 - 1, 1, P.snow); }
+  if (snow > .2) px(b, x - 1, y - 6 - h, 3, 2, P.snow);
+}
+function bison(x, y){ x = R(x); px(b, x, y - 5, 9, 5, '#4a2c16'); px(b, x + 7, y - 7, 4, 5, '#3a2210'); px(b, x + 1, y, 1, 2, '#3a2210'); px(b, x + 7, y, 1, 2, '#3a2210'); }
+function note(x, y, c){ x = R(x); y = R(y); px(b, x, y + 4, 3, 2, c); px(b, x + 2, y, 1, 5, c); px(b, x + 3, y, 2, 1, c); }
+
+/* ---------- the trail map ---------- */
+const MAPX = lon => (lon + 125) / 33 * 300 + 10, MAPY = lat => (49 - lat) / 12 * 136 + 22;
+const TRAIL = [[-94.42, 39.09], [-95.7, 39.05], [-96.6, 40.0], [-98.95, 40.64], [-101.7, 41.1], [-103.35, 41.70], [-104.56, 42.2], [-106.3, 42.85], [-107.13, 42.49],
+  [-108.9, 42.35], [-112.43, 43.03], [-114.5, 42.6], [-116.9, 43.8], [-118.2, 45.3], [-121.2, 45.6], [-122.6, 45.36]];
+const STOPS = { 0:'INDEPENDENCE', 1:'KANSAS RIVER', 3:'FT KEARNY', 5:'CHIMNEY ROCK', 6:'FT LARAMIE', 8:'INDEPENDENCE ROCK', 9:'SOUTH PASS', 10:'FT HALL', 12:'FT BOISE', 14:'THE DALLES', 15:'OREGON CITY' };
+const COAST = [[-124.7, 49.5], [-124.1, 46.2], [-124.0, 44], [-124.5, 42.8], [-124.2, 41], [-124.4, 40.3], [-123.8, 39], [-122.5, 37.8], [-121.9, 36.6], [-121.3, 35.5]];
+const RIVERS = [
+  [[-94.4, 39.1], [-95.7, 39.05], [-96.6, 39.2], [-98, 39.3]],
+  [[-95.9, 41], [-98.9, 40.7], [-101.7, 41.1], [-103.2, 41.7], [-104.5, 42.2], [-106.3, 42.85], [-107.1, 42.5], [-108.5, 42.4]],
+  [[-94.5, 39.1], [-95.9, 41], [-96.5, 42.5], [-98, 43], [-100.5, 44.4], [-101, 46], [-103, 47.9], [-106.5, 48.2]],
+  [[-110.5, 44], [-112.4, 43], [-114.5, 42.6], [-116, 43.3], [-117, 44.5], [-116.9, 46.4], [-119, 46.2], [-121.2, 45.6], [-122.8, 46.1], [-124, 46.2]],
+  [[-122.6, 45.4], [-123, 44.5], [-123.1, 43.8]],
+];
+const mapCv = document.createElement('canvas'); mapCv.width = BW; mapCv.height = BH;
+(function buildMap(){
+  const m = mapCv.getContext('2d');
+  m.fillStyle = P.parch; m.fillRect(0, 0, BW, BH);
+  for (let i = 0; i < 900; i++){ m.fillStyle = hash(i, 5) < .5 ? '#e1cb93' : '#f3e4bb'; m.fillRect(R(hash(i, 6) * BW), R(hash(i, 7) * BH), 1, 1); }
+  m.fillStyle = '#8fbcd4'; m.beginPath(); m.moveTo(0, 0); COAST.forEach(([lo, la]) => m.lineTo(MAPX(lo), MAPY(la))); m.lineTo(0, BH); m.closePath(); m.fill();
+  m.fillStyle = '#6f9fbd'; for (let y = 20; y < BH; y += 6) for (let x = (y % 12) / 2; x < 40; x += 9) m.fillRect(x, y, 3, 1);
+  m.fillStyle = '#7a6a48'; for (let i = 1; i < COAST.length; i++){ const [a, c] = [COAST[i - 1], COAST[i]]; for (let k = 0; k <= 20; k++) m.fillRect(R(lerp(MAPX(a[0]), MAPX(c[0]), k / 20)), R(lerp(MAPY(a[1]), MAPY(c[1]), k / 20)), 1, 1); }
+  const mt = (lo, la, s, snow) => { const x = R(MAPX(lo)), y = R(MAPY(la)); for (let k = 0; k < s; k++){ m.fillStyle = k < 2 && snow ? '#ffffff' : '#8c7b5a'; m.fillRect(x - k, y + k, k * 2 + 1, 1); } m.fillStyle = '#6b5c40'; m.fillRect(x, y + 1, 1, s - 1); };
+  for (let i = 0; i < 26; i++) mt(-104.5 - hash(i, 11) * 7, 37.5 + hash(i, 12) * 10.5, 5 + R(hash(i, 13) * 3), true);
+  for (let i = 0; i < 9; i++) mt(-121.4 - hash(i, 14) * .8, 41.5 + i * .8, 6, true);
+  for (let i = 0; i < 5; i++) mt(-117.6 - hash(i, 15) * 1.5, 44.6 + hash(i, 16) * 1.2, 4, false);
+  for (let i = 0; i < 6; i++) mt(-114 + hash(i, 17) * 3, 44 + hash(i, 18) * 4, 4, true);
+  m.fillStyle = '#5b93b8'; RIVERS.forEach(r => { for (let i = 1; i < r.length; i++){ const [a, c] = [r[i - 1], r[i]]; const n = 30; for (let k = 0; k <= n; k++) m.fillRect(R(lerp(MAPX(a[0]), MAPX(c[0]), k / n)), R(lerp(MAPY(a[1]), MAPY(c[1]), k / n)), 1, 1); } });
+  m.fillStyle = '#5a3a1e'; m.fillRect(0, 0, BW, 2); m.fillRect(0, BH - 2, BW, 2); m.fillRect(0, 0, 2, BH); m.fillRect(BW - 2, 0, 2, BH);
+  m.fillStyle = '#8b6b3e'; const cx = 298, cy = 42; m.fillRect(cx, cy - 10, 1, 21); m.fillRect(cx - 10, cy, 21, 1); m.fillRect(cx - 1, cy - 12, 3, 2);
+})();
+const trailLen = (() => { const L = [0]; for (let i = 1; i < TRAIL.length; i++) L.push(L[i - 1] + Math.hypot(MAPX(TRAIL[i][0]) - MAPX(TRAIL[i - 1][0]), MAPY(TRAIL[i][1]) - MAPY(TRAIL[i - 1][1]))); return L; })();
+function trailAt(d){ for (let i = 1; i < TRAIL.length; i++){ if (d <= trailLen[i]){ const u = (d - trailLen[i - 1]) / (trailLen[i] - trailLen[i - 1]); return [lerp(MAPX(TRAIL[i - 1][0]), MAPX(TRAIL[i][0]), u), lerp(MAPY(TRAIL[i - 1][1]), MAPY(TRAIL[i][1]), u)]; } } const e = TRAIL[TRAIL.length - 1]; return [MAPX(e[0]), MAPY(e[1])]; }
+function sMap(lt, i0, i1, t){
+  b.drawImage(mapCv, 0, 0);
+  const d = lerp(trailLen[i0], trailLen[i1], eIO(seg(lt, .25, 1.6)));
+  for (let s = 0; s < trailLen[TRAIL.length - 1]; s += 2){ const [x, y] = trailAt(s); px(b, x, y, 1, 1, s <= d ? '#b3261e' : '#b89b68'); }
+  Object.keys(STOPS).forEach(k => { const [lo, la] = TRAIL[k], x = R(MAPX(lo)), y = R(MAPY(la)); const on = trailLen[k] <= d + .5; px(b, x - 1, y - 1, 3, 3, on ? '#b3261e' : '#8b6b3e'); px(b, x, y, 1, 1, P.white); });
+  const [wx, wy] = trailAt(d);
+  px(b, wx - 4, wy - 7, 8, 4, P.canvas); px(b, wx - 4, wy - 7, 8, 1, P.canvasD); px(b, wx - 4, wy - 3, 8, 2, P.wood); px(b, wx - 3, wy - 1, 2, 2, P.ink); px(b, wx + 2, wy - 1, 2, 2, P.ink);
+  const [lo, la] = TRAIL[i1], lx = MAPX(lo), ly = MAPY(la), lab = STOPS[i1];
+  if (lt > 1.4){ const w = textW(lab) + 6, bx = clamp(lx - w / 2, 4, BW - w - 4), by = ly + (la > 44 ? 8 : -18); px(b, bx, by, w, 11, P.ink); txt(lab, bx + 3, by + 2, P.yellow); }
+  const lx0 = MAPX(TRAIL[0][0]), ly0 = MAPY(TRAIL[0][1]); if (i0 === 0) txt('START', lx0 - 14, ly0 + 5, '#5a3a1e');
+  caption('THE TRAIL SO FAR');
+}
+
+/* ================= scenes ================= */
+function sTitle(lt, t){
+  bands(0, 110, ['#2b1840', '#452050', '#6a2a58', '#93375a', '#c2505a', '#e4764f', '#f5a04a', '#fbc86a']);
+  disc(b, 160, R(lerp(122, 96, eOut(seg(lt, 0, 2)))), 18, '#fff1a8');
+  hills(0, 116, 18, '#4a2e3a', 3); hills(40, 124, 12, '#3a2430', 5);
+  px(b, 0, 128, BW, 52, '#2a1a20'); for (let y = 132; y < BH; y += 6) px(b, 0, y, BW, 1, '#342128');
+  const s = document.createElement('canvas');
+  txt('WESTWARD HO!', 160, 22, P.yellow, 3, 'center', '#6b2a1a');
+  txt('THE OREGON TRAIL', 160, 52, P.white, 2, 'center', '#3a1a20');
+  if (lt > .8){ b.globalAlpha = .6; px(b, 50, 71, 220, 22, '#1b0f1a'); b.globalAlpha = 1; txt('INDEPENDENCE, MO  >  OREGON CITY', 160, 74, P.parch, 1, 'center'); txt('~2,000 MILES BY OX AND WAGON', 160, 84, P.parch, 1, 'center'); }
+  const x = lerp(-80, 330, lt / 3);
+  b.globalAlpha = 1; caravan(b, x, 150, { t, walk:true, roll:x * 1.2, man:'beside' });
+  b.globalCompositeOperation = 'source-atop'; b.fillStyle = 'rgba(30,15,20,.82)'; b.fillRect(0, 128, BW, 30); b.globalCompositeOperation = 'source-over';
+}
+function sTown(lt, t){
+  bands(0, 120, ['#8ec5f0', '#9dcdf2', '#aad4f4', '#b8dbf5', '#c7e3f7']);
+  cloud(40, 30); cloud(210, 22);
+  const wx = 40 + Math.max(0, lt - 1.2) * 34, cam = Math.max(0, wx - 110);
+  hills(cam * .3, 110, 10, '#7fae6a', 7);
+  for (let i = 0; i < 20; i++){ const x = R(i * 26 - cam * .5) % 360; disc(b, x, 104, 7, '#4f8a4a'); }
+  const houses = [[72, 64, 50, '#a0522d', 'OUTFITTERS'], [142, 84, 44, '#8f6e4a', 'GENERAL STORE'], [232, 48, 38, '#7d5a8c', 'BANK'], [286, 58, 46, '#9b4f3c', 'BLACKSMITH']];
+  for (const [hx0, w, h, col, sign] of houses){
+    const x = R(hx0 - cam + 6), y = 146 - h;
+    px(b, x, y, w, h, col); px(b, x, y, w, 2, P.woodD); px(b, x - 2, y - 8, w + 4, 10, col); px(b, x - 2, y - 8, w + 4, 1, P.woodD);
+    px(b, x + 3, y - 6, w - 6, 9, P.parch); txt(sign, x + w / 2, y - 5, P.ink, 1, 'center');
+    for (let wx2 = x + 5; wx2 < x + w - 8; wx2 += 13){ px(b, wx2, y + 10, 7, 9, '#2c3e5a'); px(b, wx2, y + 14, 7, 1, col); }
+    px(b, x + w / 2 - 4, y + h - 16, 8, 16, P.woodD); px(b, x, y + h - 20, w, 2, P.woodL);
+  }
+  const cx = R(362 - cam); px(b, cx, 88, 30, 58, P.white); px(b, cx + 12, 70, 6, 18, P.white); for (let k = 0; k < 8; k++) px(b, cx + 15 - k * .4, 62 + k, 1, 1, P.ink); px(b, cx + 11, 100, 8, 12, '#2c3e5a'); px(b, cx + 13, 128, 4, 18, P.woodD);
+  px(b, 0, 146, BW, 34, '#b08a5a'); for (let x = 0; x < BW; x += 3) if (hash(x + R(cam), 3) < .4) px(b, x, 146 + R(hash(x, 4) * 30), 2, 1, '#9a7548'); px(b, 0, 158, BW, 1, '#9a7548'); px(b, 0, 170, BW, 1, '#9a7548');
+  const sx = R(34 - cam); px(b, sx, 110, 2, 38, P.woodD); px(b, sx - 30, 108, 62, 18, P.woodL); px(b, sx - 30, 108, 62, 1, P.woodD);
+  txt('INDEPENDENCE', sx + 1, 110, P.ink, 1, 'center'); txt('MISSOURI', sx + 1, 118, P.ink, 1, 'center');
+  const wave = Math.sin(t * 8) > 0;
+  man(b, 222 - cam, 150, { pose:wave ? 'cheer' : 'stand', t, dress:'#6a7fb5', bonnet:'#e9e2cf', beard:false, face:-1 });
+  man(b, 282 - cam, 150, { pose:!wave ? 'cheer' : 'stand', t, shirt:'#4f7a3a', hat:'#3a3a3a', beard:false, face:-1 });
+  caravan(b, wx - cam, 150, { t, walk:lt > 1.2, roll:wx * 1.3, man:'beside' });
+  caption('APRIL. INDEPENDENCE, MISSOURI');
+  if (lt > .4 && lt < 2.6) bubble(['WESTWARD HO!'], wx - cam + 66, 104, wx - cam + 60, 124);
+}
+function sRiver(lt, t){
+  bands(0, 110, ['#8ec5f0', '#9dcdf2', '#aad4f4', '#bfe0f6']);
+  cloud(70, 34); cloud(240, 26);
+  hills(0, 112, 12, '#6f9d5c', 11); for (let i = 0; i < 18; i++) disc(b, i * 20 + 6, 110, 6, '#3f7a44');
+  bands(126, BH, ['#4f8fc0', '#4585b8', '#3c7bb0', '#3571a6']);
+  px(b, 0, 118, 80, 62, '#8a6a3e'); px(b, 0, 118, 80, 3, '#5f9a48'); for (let y = 121; y < BH; y++) px(b, 80, y, R((y - 121) * .35) + 2, 1, '#8a6a3e');
+  px(b, 250, 118, 70, 62, '#8a6a3e'); px(b, 250, 118, 70, 3, '#5f9a48'); for (let y = 121; y < BH; y++){ const w = R((y - 121) * .35) + 2; px(b, 250 - w, y, w, 1, '#8a6a3e'); }
+  const inW = lt > .7 && lt < 4.2;
+  const x = lt < .7 ? lerp(-60, 10, lt / .7) : lt < 4.2 ? lerp(10, 190, (lt - .7) / 3.5) : lerp(190, 240, (lt - 4.2) / .8);
+  const bob = inW ? R(Math.sin(t * 5) * 1.5) : 0, gy = inW ? 138 + bob : 120;
+  caravan(b, x, gy, { t, walk:!inW, roll:x * 1.2, oxEyes:inW ? 'x' : undefined,
+    passengers:(g, wx2, wy) => man(g, wx2 + 32, wy - 12, { pose:inW ? 'scared' : 'stand', t, face:1 }) });
+  if (inW){
+    b.globalAlpha = .82; b.save(); b.beginPath(); b.rect(82, 0, 166, BH); b.clip(); bands(132 + bob, BH, ['#4f8fc0', '#4585b8', '#3c7bb0', '#3571a6']); b.restore(); b.globalAlpha = 1;
+    for (let k = 0; k < 16; k++){ const wx2 = ((k * 23 + t * 20) % 170) + 80; if (wx2 < 84 || wx2 > 246) continue; px(b, wx2, 133 + (k % 4) * 11 + bob, 4, 1, '#b9e0f7'); }
+    for (let k = 0; k < 6; k++){ const s = (t * 3 + k / 6) % 1; px(b, x + 70 + Math.cos(k) * s * 8, 130 - s * 8, 1, 1, P.white); px(b, x + 20 - s * 10, 134 - Math.sin(k * 3) * s * 5, 1, 1, P.white); }
+  } else { for (let k = 0; k < 16; k++){ const wx2 = ((k * 23 + t * 20) % 170) + 80; if (wx2 > 84 && wx2 < 246) px(b, wx2, 133 + (k % 4) * 11, 4, 1, '#b9e0f7'); } }
+  caption('MAY. FORDING THE KANSAS RIVER');
+  if (lt > 1.2 && lt < 3.4) bubble(['HOLD ON, OX!'], x + 40, 90, x + 36, 112);
+  if (lt > 2.0 && lt < 3.8) sfx('SPLASH!', x + 80, 58, 2, '#b9e0f7');
+}
+function prairie(lt, t, variant){
+  const scroll = t * 32;
+  if (variant === 'sage'){ bands(0, 118, ['#f2c56b', '#f5d284', '#f7dea0', '#f8e8bd']); disc(b, 262, 34, 13, '#fff4c2'); }
+  else bands(0, 118, ['#7fbde8', '#8ec5f0', '#9dcdf2', '#aad4f4', '#b8dbf5']);
+  if (variant !== 'sage'){ cloud(R(80 - scroll * .1) % 360 + 20, 30); cloud(R(260 - scroll * .1) % 360, 22); }
+  hills(scroll * .15, 108, 16, variant === 'sage' ? '#c9a46a' : '#94b37a', 21);
+  hills(scroll * .35, 120, 10, variant === 'sage' ? '#b48d55' : '#7da45f', 23);
+  px(b, 0, 124, BW, 56, variant === 'sage' ? '#c8a266' : '#7fa653'); px(b, 0, 124, BW, 1, variant === 'sage' ? '#a88548' : '#5d8a3a');
+  if (variant === 'sage') for (let i = 0; i < 26; i++){ const x = ((hash(i, 8) * 420 - scroll) % 420 + 420) % 420 - 30, y = 128 + hash(i, 9) * 44; disc(b, x, y, 2, '#7d8f5a'); px(b, x - 1, y - 2, 1, 1, '#9fb07a'); }
+  else { grass(scroll, 126, '#5d8a3a'); for (let i = 0; i < 18; i++){ const x = ((hash(i, 12) * 420 - scroll) % 420 + 420) % 420 - 30; px(b, x, 130 + hash(i, 13) * 40, 1, 1, ['#f7e36b', '#f28bb0', '#ffffff'][i % 3]); } }
+  px(b, 0, 150, BW, 3, variant === 'sage' ? '#b08a50' : '#9a8454');
+}
+function sPlains(lt, t){
+  prairie(lt, t, 'plains');
+  for (let i = 0; i < 7; i++){ const x = ((i * 36 + 60 - t * 12) % 400 + 400) % 400 - 40; bison(x, 118 + (i % 3) * 2); }
+  caravan(b, 70, 151, { t, walk:true, roll:t * 38, man:'beside' });
+  caption('MAY. ACROSS THE GREAT PLAINS');
+}
+function sChimney(lt, t){
+  prairie(lt, t, 'plains');
+  const cx = R(lerp(360, 60, lt / 4));
+  for (let y = 0; y < 44; y++){ const w = R(7 + 46 * Math.pow(y / 44, 1.9)); px(b, cx - w, 124 - 44 + y, w * 2, 1, y % 7 === 0 ? '#a9834e' : '#c9a36b'); px(b, cx - w, 124 - 44 + y, 3, 1, '#a9834e'); }
+  for (let y = 0; y < 34; y++){ const w = R(lerp(2, 5, y / 34)); px(b, cx - w, 80 - 34 + y, w * 2, 1, y % 6 === 0 ? '#a9834e' : '#d4b27c'); }
+  caravan(b, 70, 151, { t, walk:true, roll:t * 38, man:'beside', pose:lt > 1.2 && lt < 3 ? 'point' : 'walk' });
+  caption('JUNE. CHIMNEY ROCK, NEBRASKA');
+  if (lt > 1.4 && lt < 3.3) bubble(['LOOK! CHIMNEY ROCK!'], 170, 80, 132, 118);
+}
+function sIndRock(lt, t){
+  prairie(lt, t, 'plains');
+  const cx = R(lerp(330, 150, eOut(seg(lt, 0, 2.6))));
+  for (let y = 0; y < 42; y++){ const u = 1 - y / 42, w = R(95 * Math.sqrt(1 - u * u)); px(b, cx - w, 124 - 42 + y, w * 2, 1, y < 4 ? '#b8b2aa' : y % 9 === 0 ? '#7b766f' : '#99938b'); }
+  for (let k = 0; k < 14; k++){ const x = cx - 60 + (k % 7) * 18, y = 100 + Math.floor(k / 7) * 10; px(b, x, y, 6 + (k % 3), 1, '#5c5751'); px(b, x + 2, y + 2, 4, 1, '#5c5751'); }
+  px(b, cx + 30, 70, 1, 13, P.woodD); for (let r = 0; r < 5; r++) px(b, cx + 31, 70 + r, 9, 1, r % 2 ? P.white : P.red); px(b, cx + 31, 70, 4, 3, '#2c4a8a');
+  caravan(b, 70, 151, { t, walk:lt < 3, roll:Math.min(t, 23 + 3) * 38, man:'beside', pose:lt > 3 ? 'cheer' : 'walk' });
+  caption('JULY 4TH. INDEPENDENCE ROCK, WYOMING');
+  if (lt > 2.2) bubble(['RIGHT ON TIME!'], 150, 70, 132, 118);
+}
+function sCamp(lt, t){
+  bands(0, 120, ['#0b1026', '#101735', '#152044', '#1b2a52']);
+  for (let i = 0; i < 60; i++) if (Math.sin(t * 2 + i * 7) > -.4) px(b, hash(i, 1) * BW, hash(i, 2) * 100, 1, 1, i % 5 ? '#dfe6ff' : P.yellow);
+  disc(b, 270, 30, 9, '#f4f0d0'); disc(b, 274, 27, 8, '#101735');
+  hills(0, 112, 16, '#0d1a2a', 31);
+  for (const [x, s] of [[30, .8], [110, .75], [210, .75], [280, .8]]){ const w = R(38 * s), h = R(13 * s); for (let i = 0; i < w; i++){ const u = (i - w / 2) / (w / 2), hh = R(h * Math.sqrt(Math.max(0, 1 - u * u * u * u))); px(b, x + i, 122 - hh, 1, hh, '#2a2f3e'); } px(b, x, 122, w, 5, '#1d2230'); }
+  px(b, 0, 126, BW, 54, '#1e2a1c');
+  const fx = 160, fy = 154;
+  for (let r = 70; r > 0; r -= 6){ b.globalAlpha = .06; disc(b, fx, fy - 4, r, '#ff9a3c'); } b.globalAlpha = 1;
+  const fr = Math.floor(t * 12);
+  line(b, fx - 10, fy + 1, fx + 10, fy - 2, P.woodD, 2); line(b, fx - 10, fy - 2, fx + 10, fy + 1, P.woodD, 2);
+  for (let k = -6; k <= 6; k++){ const h = R((12 - Math.abs(k) * 1.5) * (.6 + .5 * hash(k, fr))); if (h <= 0) continue; px(b, fx + k, fy - h, 1, h, '#e24a1c'); px(b, fx + k, fy - R(h * .7), 1, R(h * .6), '#ff9a3c'); if (Math.abs(k) < 3) px(b, fx + k, fy - R(h * .45), 1, R(h * .35), '#ffe27a'); }
+  for (let k = 0; k < 6; k++){ const s = (t * .8 + k / 6) % 1; px(b, fx + Math.sin(k * 5 + t * 3) * 6, fy - 12 - s * 30, 1, 1, s < .5 ? P.yellow : '#ff9a3c'); }
+  px(b, 88, 151, 40, 4, P.woodD); px(b, 192, 151, 40, 4, P.woodD);
+  const bob = k => (Math.sin(t * 6 + k) > 0 ? 1 : 0);
+  ox(b, 22, 152, { eyes:'sleep', yoke:false });
+  const z = (t * .7) % 1; txt('Z', 52 + z * 6, 118 - z * 14, '#9aa8d8'); if (z > .5) txt('Z', 58, 108 - (z - .5) * 10, '#9aa8d8');
+  man(b, 160, 140, { pose:'fiddle', t, face:1, shirt:'#3f6f8a', hat:'#2c2c2c', beard:'#bdbdbd' });
+  man(b, 98, 151 - bob(0), { pose:'sing', t, face:1, shirt:'#5d7d3a', hat:false, hair:'#d8a23a', beard:false });
+  man(b, 120, 151 - bob(1), { pose:'sing', t, face:1 });
+  man(b, 202, 151 - bob(2), { pose:'sing', t, face:-1, shirt:'#7a4f9a', bonnet:'#e9e2cf', beard:false });
+  man(b, 224, 151 - bob(3), { pose:'sing', t, face:-1, shirt:'#9a6a3a', hat:'#5a4a3a', beard:'#4a2a1a' });
+  for (let k = 0; k < 4; k++){ const s = (t * .5 + k / 4) % 1; note(130 + k * 22 + Math.sin(s * 6 + k) * 6, 120 - s * 60, ['#ffe27a', '#f7b0d0', '#b0e0ff', '#c8f0a0'][k]); }
+  caption('JULY. CAMPFIRE SONGS');
+  if (lt > .8 && lt < 3.4) bubble(['OH SUSANNA,', 'OH DONT YOU CRY FOR ME...'], 160, 78, 124, 124);
+  else if (lt >= 3.6 && lt < 5.8) bubble(['...FOR I COME FROM ALABAMA', 'WITH MY BANJO ON MY KNEE!'], 170, 78, 200, 124);
+}
+function sWalk(lt, t){
+  prairie(lt, t, 'sage');
+  for (let k = 0; k < 8; k++){ const s = (t * .6 + k / 8) % 1; px(b, 70 - s * 40, 146 - s * 10 + Math.sin(k) * 3, 2, 1, 'rgba(200,170,120,.8)'); }
+  caravan(b, 90, 151, { t, walk:true, roll:t * 38, man:'beside' });
+  caption('AUGUST. WALK, WALK, WALK...');
+  if (lt > 1.2) bubble(['ARE WE THERE YET?'], 170, 84, 156, 124);
+}
+function mountains(peakCol, snowCol, base, id){ for (let x = 0; x < BW; x++){ const h = R(70 * noise(id, x * .018) + 20 * noise(id + 5, x * .06)); px(b, x, base - h, 1, h + 60, peakCol); if (h > 55) px(b, x, base - h, 1, R((h - 55) * .9) + 2, snowCol); } }
+function tiltBlit(ax, ay, ang, lx, ly){ b.save(); b.translate(ax, ay); b.rotate(ang); b.imageSmoothingEnabled = false; b.drawImage(cc, -lx, -ly); b.restore(); }
+function localToScreen(ax, ay, ang, lx, ly, px2, py2){ const dx = px2 - lx, dy = py2 - ly; return [ax + dx * Math.cos(ang) - dy * Math.sin(ang), ay + dx * Math.sin(ang) + dy * Math.cos(ang)]; }
+function sClimb(lt, t){
+  bands(0, 120, ['#6fa7d8', '#7fb2de', '#90bde3', '#a3c9e8']);
+  mountains('#7c8aa5', '#f4f7ff', 120, 41); mountains('#5f6f8a', '#e8eef8', 140, 43);
+  const x0 = 0, y0 = 178, x1 = 320, y1 = 70, ang = Math.atan2(y1 - y0, x1 - x0);
+  b.fillStyle = '#6b5a45'; for (let x = 0; x < BW; x++){ const y = R(lerp(y0, y1, x / BW)); b.fillRect(x, y, 1, BH - y); b.fillStyle = '#857156'; b.fillRect(x, y, 1, 2); b.fillStyle = '#6b5a45'; }
+  for (let i = 0; i < 40; i++){ const x = hash(i, 3) * BW, y = lerp(y0, y1, x / BW) + 6 + hash(i, 4) * 50; px(b, x, y, 2 + R(hash(i, 5) * 3), 1, '#56483a'); }
+  for (let i = 0; i < 5; i++){ const x = 30 + i * 70; pine(x, lerp(y0, y1, x / BW) + 2, 22 + (i % 2) * 8); }
+  const u = lerp(.1, .42, eIO(lt / 5)), ax = u * BW, ay = lerp(y0, y1, u);
+  c2.clearRect(0, 0, cc.width, cc.height);
+  caravan(c2, 14, 60, { t, walk:true, roll:u * 800, man:'behind', strain:true });
+  tiltBlit(ax, ay, ang, 14, 60);
+  if (Math.sin(t * 7) > .2){ const [sx, sy] = localToScreen(ax, ay, ang, 14, 60, 8, 38); px(b, sx - 3, sy - 2, 1, 2, '#9ad1ff'); px(b, sx + 2, sy - 4, 1, 2, '#9ad1ff'); }
+  caption('AUGUST. THE ROCKY MOUNTAINS');
+  const [hx, hy] = localToScreen(ax, ay, ang, 14, 60, 8, 34);
+  if (lt > .8 && lt < 2.6) bubble(['HEAVE!'], hx, hy - 20, hx, hy - 6);
+  else if (lt > 2.8) bubble(['ALMOST... THERE...'], hx + 20, hy - 22, hx, hy - 6);
+}
+function sDown(lt, t){
+  bands(0, 110, ['#6fa7d8', '#7fb2de', '#90bde3', '#a3c9e8']);
+  mountains('#7c8aa5', '#f4f7ff', 110, 47);
+  const x0 = 0, y0 = 58, x1 = 320, y1 = 176, ang = Math.atan2(y1 - y0, x1 - x0), sc = t * 90;
+  for (let x = 0; x < BW; x++){ const y = R(lerp(y0, y1, x / BW)); px(b, x, y, 1, BH - y, '#6b5a45'); px(b, x, y, 1, 2, '#857156'); }
+  for (let i = 0; i < 9; i++){ const x = ((i * 50 - sc * .4) % 460 + 460) % 460 - 40; pine(x, lerp(y0, y1, x / BW) + 2, 20 + (i % 3) * 6); }
+  const u = lerp(-.12, 1.15, seg(lt, 0, 3.8)), ax = u * BW, ay = lerp(y0, y1, u) + (Math.floor(t * 14) % 2 ? -2 : 0);
+  c2.clearRect(0, 0, cc.width, cc.height);
+  wagon(c2, 20, 60, { roll:t * 200, tongue:false, passengers:(g, wx2, wy) => {
+    px(g, wx2 + 30, wy - 26, 6, 11, '#4a3c2c');
+    ox(g, wx2 + 6, wy - 3, { headOnly:true, eyes:'wide' });
+    man(g, wx2 + 22, wy - 8, { pose:'scared', t, face:1 });
+  } });
+  for (let k = 0; k < 5; k++) line(c2, 2, 40 + k * 4, 14 - (k % 2) * 4, 40 + k * 4, '#ffffff');
+  tiltBlit(ax, ay, ang, 20, 60);
+  for (let k = 0; k < 8; k++){ const s = (t * 3 + k / 8) % 1, [dx, dy] = localToScreen(ax, ay, ang, 20, 60, 10 - s * 40, 58 - s * 6); disc(b, dx, dy, 1 + R(s * 3), 'rgba(200,180,150,.7)'); }
+  if (lt > .5 && lt < 3.6) sfx('AAAAAH!', clamp(ax + 20, 70, 250), R(clamp(ay - 60, 30, 110)) + (Math.floor(t * 20) % 2), 2, P.yellow);
+  caption('...AND DOWN THE OTHER SIDE!');
+}
+function sOregon(lt, t){
+  const snowOn = seg(lt, 4.8, 9.5), gray = snowOn * .55;
+  bands(0, 110, ['#6fb3ea', '#7cbcee', '#8cc6f1', '#9fd0f3', '#b4dbf5']);
+  if (gray > 0){ b.globalAlpha = gray; px(b, 0, 0, BW, 110, '#9aa3b5'); b.globalAlpha = 1; }
+  if (gray < .4){ b.globalAlpha = 1 - gray * 2; cloud(60, 28); cloud(220, 38); b.globalAlpha = 1; }
+  for (let y = 0; y < 58; y++){ const w = R(y * 1.25); px(b, 200 - w, 50 + y, w * 2, 1, y < 16 ? P.snow : '#7a8fb0'); if (y >= 16) px(b, 200 - w, 50 + y, R(w * .7), 1, '#6a7fa0'); }
+  hills(0, 112, 14, '#6aa860', 51); hills(30, 124, 10, '#5b9c52', 53);
+  px(b, 0, 128, BW, 52, '#6fbf5a');
+  for (let y = 136; y < 146; y++) px(b, 0, y + R(Math.sin(y) * 2), BW, 1, y < 138 || y > 143 ? '#8fd0f0' : '#5aa8d8');
+  for (let i = 0; i < 70; i++){ const x = hash(i, 21) * BW, y = 148 + hash(i, 22) * 30, sw = R(Math.sin(t * 2 + i) * .8); px(b, x + sw, y, 1, 2, '#3f8f3a'); if (i % 3 === 0) px(b, x + sw, y - 1, 1, 1, ['#ffe066', '#ff8fb8', '#ffffff', '#c89bff'][i % 4]); }
+  for (const [x, h] of [[18, 110], [44, 92], [292, 118], [268, 96], [312, 80]]) pine(x, 152, h, snowOn * .7);
+  for (const [x, r] of [[82, 16], [240, 14]]){ px(b, x - 2, 128, 4, 18, '#5a3a24'); disc(b, x, 118, r, '#3f8f3a'); disc(b, x - 4, 114, r - 5, '#4fa347'); if (snowOn > .3) px(b, x - r + 3, 118 - r + 1, (r - 3) * 2, 2, P.snow); }
+  const wx = lt < 3 ? lerp(-80, 110, eOut(lt / 3)) : 110, walking = lt < 3;
+  const cheer = lt > 3 && lt < 5, hatLift = cheer ? R(Math.abs(Math.sin((lt - 3) * 3)) * 10) : 0;
+  caravan(b, wx, 158, { t, walk:walking, roll:wx * 1.3, man:'beside', pose:cheer ? 'cheer' : (lt > 5 ? 'catch' : undefined), hatLift, snow:snowOn * .8 });
+  if (snowOn > 0){
+    const n = R(snowOn * 160);
+    for (let i = 0; i < n; i++){ const sp = 10 + hash(i, 31) * 14, x = (hash(i, 32) * BW + Math.sin(t * 1.2 + i) * 6 + BW) % BW, y = (hash(i, 33) * 200 + t * sp) % 200 - 10; px(b, x, y, hash(i, 34) < .3 ? 2 : 1, hash(i, 34) < .3 ? 2 : 1, P.snow); }
+    for (let x = 0; x < BW; x++) if (hash(x, 41) < snowOn * .95){ const h = R(snowOn * 3 * hash(x, 42)); px(b, x, 128, 1, h + 1, P.snow); }
+    for (let i = 0; i < R(snowOn * 260); i++) px(b, hash(i, 51) * BW, 146 + hash(i, 52) * 34, 2, 1, P.snow);
+  }
+  caption(lt < 5 ? 'OCTOBER. OREGON AT LAST!' : 'NOVEMBER. THE FIRST SNOW...');
+  if (lt > 3.1 && lt < 5.2) bubble(['WE MADE IT!'], wx + 58, 100, wx + 60, 128);
+  if (lt > 5.8 && lt < 8){ bubble(['HOME.'], wx + 58, 100, wx + 60, 128); }
+  if (lt > 8.4) txt('THE END', 160, 60, P.white, 3, 'center', '#51607a');
+}
+
+/* ================= timeline ================= */
+const SCENES = [
+  [0, 3, sTitle, '', 0], [3, 8, sTown, 'APR', 0], [8, 10, (l, t) => sMap(l, 0, 1, t), 'MAY', 0], [10, 15, sRiver, 'MAY', 100], [15, 19, sPlains, 'MAY', 100],
+  [19, 23, sChimney, 'JUN', 400], [23, 27, sIndRock, 'JUL', 650], [27, 33, sCamp, 'JUL', 830], [33, 36, sWalk, 'AUG', 830], [36, 38, (l, t) => sMap(l, 1, 9, t), 'AUG', 900],
+  [38, 43, sClimb, 'AUG', 940], [43, 47, sDown, 'AUG', 980], [47, 49, (l, t) => sMap(l, 9, 15, t), 'SEP', 1020], [49, 60, sOregon, 'OCT', 2000],
+];
+const DUR = 60;
+const MILES = [[0, 0], [8, 0], [10, 100], [15, 110], [19, 400], [23, 560], [25, 830], [33, 840], [36, 900], [38, 940], [43, 980], [47, 1020], [49, 2000], [60, 2000]];
+function milesAt(t){ for (let i = 1; i < MILES.length; i++) if (t <= MILES[i][0]) return lerp(MILES[i - 1][1], MILES[i][1], seg(t, MILES[i - 1][0], MILES[i][0])); return 2000; }
+function render(t){
+  b.imageSmoothingEnabled = false; b.globalAlpha = 1;
+  let i = 0; SCENES.forEach((s, k) => { if (t >= s[0]) i = k; });
+  const [s0, s1, fn, mon] = SCENES[i], lt = t - s0;
+  fn(lt, t);
+  if (i > 0){
+    px(b, 0, 0, BW, 12, P.ink); txt('OREGON TRAIL', 4, 3, P.parch);
+    const m = i === SCENES.length - 1 && lt > 5 ? 'NOV' : mon; txt(m, 160, 3, P.yellow, 1, 'center');
+    txt('MILES ' + R(milesAt(t)).toLocaleString('en-US').padStart(5, ' '), 316, 3, P.parch, 1, 'right');
+  }
+  const f = Math.max(seg(.2 - lt, 0, .2), seg(lt, (s1 - s0) - .2, s1 - s0)); if (f > 0){ b.fillStyle = `rgba(0,0,0,${f})`; b.fillRect(0, 0, BW, BH); }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false; ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.09)'; for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+  if (!playing){ ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cv.width - 14 * s, cv.height - 14 * s, 3 * s, 9 * s); ctx.fillRect(cv.width - 9 * s, cv.height - 14 * s, 3 * s, 9 * s); }
+}
+function resize(){ const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px'; cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr); }
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now; if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => {
+  let i = 0; SCENES.forEach((s, k) => { if (T >= s[0]) i = k; });
+  if (e.key === ' '){ e.preventDefault(); playing = !playing; }
+  else if (e.key === 'ArrowRight') T = SCENES[(i + 1) % SCENES.length][0];
+  else if (e.key === 'ArrowLeft') T = SCENES[(i - 1 + SCENES.length) % SCENES.length][0];
+});
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
