@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixel Map Voyage</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b14;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second style sample: a pixel-art ship sails the Magellan-Elcano route around a pixel world map, then the voyage is summarised in numbers."></canvas>
+<script>
+'use strict';
+/* Style sample: map / travel × retro pixel art (20 s loop).
+   The Magellan–Elcano circumnavigation, 1519–1522, on a pixel world map.
+   Everything is drawn into a 320×180 buffer and scaled up without smoothing.
+   Click = pause. ?t=5 opens paused at 5 s. */
+const BW = 320, BH = 180, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH;
+const b = buf.getContext('2d');
+
+const C = { black:'#000000', navy:'#1d2b53', plum:'#7e2553', green:'#008751', brown:'#ab5236', dgray:'#5f574f',
+  lgray:'#c2c3c7', white:'#fff1e8', red:'#ff004d', orange:'#ffa300', yellow:'#ffec27', lime:'#00e436',
+  blue:'#29adff', lav:'#83769c', pink:'#ff77a8', peach:'#ffccaa' };
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const R = Math.round;
+
+/* ---------- 5×7 bitmap font ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x;
+  x0 = R(x0); y = R(y);
+  if (shadow) pxText(s, x0 + sc, y + sc, shadow, sc);
+  b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue;
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+
+/* ---------- sprites ---------- */
+const SHIP = ['....r......', '....|www...', '....|wwww..', '....|wwwww.', '....|wwww..', '....|......', 'kbbbbbbbbbk', '.kbbbbbbbk.', '..kkkkkkk..'];
+const SHIP_PAL = { r:C.red, w:C.white, '|':C.dgray, b:C.brown, k:C.black, g:C.dgray, d:C.black };
+function ship(x, y, sc = 1, flip = false, ghost = false){
+  x = R(x); y = R(y);
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 11; c++){
+    const k = SHIP[r][flip ? 10 - c : c]; if (k === '.') continue;
+    b.fillStyle = ghost ? (k === 'k' ? C.black : C.dgray) : SHIP_PAL[k]; b.fillRect(x + c * sc, y + r * sc, sc, sc);
+  }
+}
+function stars(t, n = 40, maxY = 130){
+  for (let i = 0; i < n; i++){ const x = (i * 97) % BW, y = (i * 53) % maxY + 4; b.fillStyle = Math.sin(t * 3 + i * 1.7) > -.2 ? C.white : C.lav; b.fillRect(x, y, 1, 1); }
+}
+function iris(r, cx, cy){ if (r > 400) return; b.fillStyle = C.black; b.beginPath(); b.rect(0, 0, BW, BH); b.arc(cx, cy, Math.max(0, r), 0, Math.PI * 2, true); b.fill('evenodd'); }
+
+/* ---------- pixel world map (simplified coastlines, lon/lat) ---------- */
+const LAND = [
+  // North America
+  [[-165,60],[-168,66],[-162,70],[-150,71],[-140,70],[-128,70],[-115,68],[-110,68],[-96,68],[-94,62],[-92,58],[-86,55.5],[-82,55],[-79,52],[-78,56],[-78,62],[-72,62],[-65,60],[-62,56],[-56,52],[-60,47],[-66,44],[-70,42],[-74,40],[-76,35],[-81,31],[-80,26],[-81,25],[-82,27],[-84,30],[-89,30],[-94,29],[-97,26],[-97,21],[-95,18.5],[-91,19],[-90,21],[-87,21.5],[-88,16],[-84,15],[-83,10],[-80,9],[-77,8],[-80,7],[-84,9],[-86,12],[-92,15],[-97,16],[-105,20],[-112,28],[-117,32],[-120,34.5],[-124,40],[-124,46],[-125,49],[-130,54],[-135,58],[-140,60],[-146,61],[-152,59],[-157,57],[-162,55],[-160,58]],
+  [[-125,72],[-110,77],[-90,80],[-65,82],[-62,78],[-75,74],[-65,68],[-75,64],[-85,66],[-90,70],[-110,72]],
+  [[-55,60],[-45,60],[-20,70],[-20,80],[-40,83],[-60,80],[-70,77],[-55,70]],
+  [[-85,22],[-78,23],[-74,20],[-78,20],[-82,22]],
+  [[-24,64],[-14,64],[-14,66],[-22,66]],
+  // South America
+  [[-77,8],[-72,12],[-62,10],[-52,5],[-35,-5],[-35,-9],[-39,-15],[-41,-22],[-48,-26],[-53,-34],[-58,-38],[-62,-39],[-65,-45],[-68,-51],[-69,-52],[-74,-53],[-75,-50],[-73,-40],[-71,-30],[-70,-18],[-76,-14],[-81,-6],[-80,0],[-78,4]],
+  [[-69,-53],[-66,-55],[-71,-55],[-74,-53.8]],
+  // Europe + Asia
+  [[-9,37],[-9,43],[-2,43.5],[-4.5,48],[-1,49.5],[2,51],[5,53],[8,54],[10,54],[14,54],[20,55],[24,57],[28,60],[30,60],[32,68],[40,67],[45,68],[60,69],[70,73],[80,73],[100,77],[113,74],[130,71],[150,71],[170,70],[180,66],[175,62],[165,60],[160,55],[156,51],[155,56],[150,59],[140,59],[137,54],[141,52],[140,48],[135,43],[130,42],[129,36],[126,35],[126,38],[125,40],[122,40],[121,37],[119,37],[121,32],[121,28],[117,23],[110,21],[108,21],[106,18],[109,15],[109,11],[105,9],[103,10],[100,13],[100,8],[103,4],[104,1.3],[100,3],[98,8],[98,16],[94,16],[92,21],[88,22],[86,20],[80,15],[80,10],[77,8],[73,16],[72,21],[70,23],[67,24],[62,25],[57,26],[56,27],[52,28],[50,30],[48,30],[50,26],[51,24],[55,24],[57,24],[59,22],[57,19],[52,16],[45,13],[43,13],[42,16],[39,21],[35,28],[34,31],[35,33],[36,36],[30,36],[27,37],[26,40],[23,40],[22,37],[21,39],[19,42],[16,43],[13,45],[12,44],[14,42],[16,41],[18,40],[16,38],[15,40],[12,42],[10,44],[7,44],[3,43],[3,42],[0,39],[-1,37],[-5,36]],
+  [[5,58],[5,61],[8,63],[14,67],[18,69.5],[25,71],[31,70],[30,66],[25,65.5],[21,63],[18,60],[16,56],[13,55.5],[11,58],[8,58]],
+  [[-5,50],[1,51],[2,53],[-2,56],[-3,58.5],[-6,58],[-5,54],[-4,52]], [[-10,52],[-6,52],[-6,55],[-8,55]],
+  [[130,31],[135,34],[140,35],[142,40],[141,45],[140,41],[136,36],[131,34]],
+  [[120,18],[122,18],[126,7],[122,7],[120,12]],
+  [[109,1],[117,7],[119,1],[116,-4],[110,-3]], [[95,5],[98,4],[106,-6],[102,-4]],
+  [[131,-1],[141,-3],[150,-10],[141,-9],[137,-5]], [[119,-9],[127,-8],[125,-10],[119,-10]],
+  // Africa
+  [[-6,36],[-10,30],[-13,27],[-17,21],[-17,15],[-15,10],[-12,7],[-8,4.5],[-2,5],[5,6],[9,4],[9.5,2],[10,-2],[12,-6],[13,-12],[12,-18],[15,-27],[18,-34],[20,-35],[25,-34],[28,-33],[32,-29],[33,-26],[35,-24],[35,-20],[40,-16],[40,-11],[39,-5],[41,-1],[45,2],[48,5],[51,11],[44,11],[43,12],[39,16],[37,20],[35,24],[34,27],[32,31],[29,31],[25,32],[20,31],[19,30],[15,32],[11,33],[10,37],[3,37],[-2,35]],
+  [[44,-25],[47,-25],[50,-15],[49,-12],[44,-17]],
+  // Oceania
+  [[114,-22],[114,-34],[118,-35],[123,-34],[129,-32],[135,-35],[139,-37],[146,-39],[150,-37],[153,-30],[153,-25],[146,-19],[145,-15],[142,-11],[141,-17],[137,-12],[131,-11],[126,-14],[122,-18]],
+  [[172,-35],[178,-38],[174,-41],[167,-46],[171,-44]],
+];
+const MX = 160, MY = 65, MTOP = 16, LAT0 = 80, LATS = 140;         // map grid: 160×65 cells of 2×2 px
+const px = lon => ((((lon + 180) % 360) + 360) % 360) / 360 * BW;
+const py = lat => MTOP + (LAT0 - lat) / LATS * (MY * 2);
+const mapCv = document.createElement('canvas'); mapCv.width = BW; mapCv.height = MY * 2;
+let water = null;
+(function buildMap(){
+  const g = document.createElement('canvas'); g.width = MX; g.height = MY; const gx = g.getContext('2d');
+  gx.fillStyle = '#fff';
+  for (const poly of LAND){ gx.beginPath(); poly.forEach(([lo, la], i) => { const x = (lo + 180) / 360 * MX, y = (LAT0 - la) / LATS * MY; i ? gx.lineTo(x, y) : gx.moveTo(x, y); }); gx.closePath(); gx.fill(); }
+  const d = gx.getImageData(0, 0, MX, MY).data, land = (x, y) => x >= 0 && x < MX && y >= 0 && y < MY && d[(y * MX + x) * 4 + 3] > 110;
+  water = new Uint8Array(MX * MY);
+  const m = mapCv.getContext('2d');
+  for (let y = 0; y < MY; y++) for (let x = 0; x < MX; x++){
+    const lat = LAT0 - (y + .5) / MY * LATS;
+    if (!land(x, y)){ water[y * MX + x] = 1; m.fillStyle = C.navy; }
+    else {
+      const coast = !land(x - 1, y) || !land(x + 1, y) || !land(x, y - 1) || !land(x, y + 1);
+      m.fillStyle = coast ? C.peach : Math.abs(lat) > 62 ? C.white : Math.abs(lat) < 32 && Math.abs(lat) > 15 && (((x * 73856093) ^ (y * 19349663)) >>> 0) % 6 === 0 ? C.orange : C.green;
+    }
+    m.fillRect(x * 2, y * 2, 2, 2);
+  }
+  // graticule every 30°
+  m.fillStyle = 'rgba(41,173,255,.22)';
+  for (let lo = -150; lo < 180; lo += 30){ const x = R(px(lo)); for (let y = 0; y < MY * 2; y += 2) if (water[(y >> 1) * MX + (x >> 1)]) m.fillRect(x, y, 1, 1); }
+  for (let la = 60; la > -60; la -= 30){ const y = R(py(la) - MTOP); for (let x = 0; x < BW; x += 2) if (water[(y >> 1) * MX + (x >> 1)]) m.fillRect(x, y, 1, 1); }
+})();
+
+/* ---------- the voyage (unwrapped longitudes so the route can wrap past 180°) ---------- */
+const STOPS = [
+  { at:2.3,  day:0,    ships:5, t:['SEP 1519', 'SANLUCAR, SPAIN', '5 SHIPS SET SAIL WEST'] },
+  { at:4.0,  day:84,   ships:5, t:['DEC 1519', 'RIO DE JANEIRO BAY', 'RESUPPLY IN BRAZIL'] },
+  { at:5.3,  day:193,  ships:4, t:['MAR-AUG 1520', 'SAN JULIAN, PATAGONIA', 'WINTER + MUTINY; SANTIAGO WRECKED'] },
+  { at:6.3,  day:397,  ships:3, t:['OCT-NOV 1520', 'STRAIT OF MAGELLAN', 'SAN ANTONIO DESERTS'] },
+  { at:8.6,  day:533,  ships:3, t:['MAR 1521', 'GUAM', '98 DAYS ACROSS THE PACIFIC'] },
+  { at:9.7,  day:585,  ships:2, t:['APR 1521', 'MACTAN, PHILIPPINES', 'MAGELLAN KILLED; CONCEPCION BURNED'] },
+  { at:10.8, day:780,  ships:1, t:['NOV 1521', 'TIDORE, SPICE ISLANDS', 'TRINIDAD STAYS BEHIND'] },
+  { at:13.3, day:973,  ships:1, t:['MAY 1522', 'CAPE OF GOOD HOPE', 'ELCANO SAILS VICTORIA HOME'] },
+  { at:15.2, day:1082, ships:1, t:['SEP 1522', 'SANLUCAR, SPAIN', 'FIRST VOYAGE AROUND THE WORLD'] },
+];
+const LEGS = [
+  [[-6.4,36.8],[-12,34],[-17,27],[-24,12],[-28,0],[-33,-10],[-39,-20],[-43,-23.5]],
+  [[-43,-23.5],[-48,-29],[-54,-35],[-57,-37],[-62,-43],[-65,-47],[-67.5,-49.3]],
+  [[-67.5,-49.3],[-68,-52],[-70,-53.5],[-74,-53]],
+  [[-74,-53],[-78,-50],[-80,-40],[-90,-28],[-110,-15],[-135,-5],[-160,5],[-185,12],[-215.2,13.4]],
+  [[-215.2,13.4],[-225,12],[-232,11],[-236,10.3]],
+  [[-236,10.3],[-234,6],[-232.6,0.7]],
+  [[-232.6,0.7],[-235,-5],[-236,-9.8],[-245,-13],[-265,-20],[-290,-30],[-315,-37],[-341.5,-35.5]],
+  [[-341.5,-35.5],[-350,-28],[-355,-15],[-365,0],[-379,10],[-383,15],[-380,25],[-375,33],[-366.4,36.8]],
+];
+const legLen = LEGS.map(l => { let s = 0; for (let i = 1; i < l.length; i++) s += Math.hypot(l[i][0] - l[i-1][0], l[i][1] - l[i-1][1]); return s; });
+function along(li, u){
+  const l = LEGS[li]; let d = u * legLen[li];
+  for (let i = 1; i < l.length; i++){ const s = Math.hypot(l[i][0] - l[i-1][0], l[i][1] - l[i-1][1]);
+    if (d <= s || i === l.length - 1){ const k = s ? clamp(d / s) : 0; return [lerp(l[i-1][0], l[i][0], k), lerp(l[i-1][1], l[i][1], k)]; } d -= s; }
+}
+const depart = i => i === 0 ? 3.0 : STOPS[i].at + .5;   // leg i runs from stop i to stop i+1
+function state(T){
+  let li = -1, u = 0;
+  for (let i = 0; i < LEGS.length; i++){ if (T >= depart(i)){ li = i; u = seg(T, depart(i), STOPS[i + 1].at); } }
+  let si = -1; STOPS.forEach((s, i) => { if (T >= s.at) si = i; });
+  const pos = li < 0 ? LEGS[0][0] : along(li, eOut(u) * .15 + u * .85);
+  const prev = li < 0 ? pos : along(li, Math.max(0, u - .02));
+  let day = si < 0 ? 0 : STOPS[si].day;
+  if (li >= 0 && u > 0 && u < 1) day = R(lerp(STOPS[li].day, STOPS[li + 1].day, u));
+  return { li, u, si, pos, west:pos[0] <= prev[0], day };
+}
+
+/* ---------- scene 1: title (0–2 s) ---------- */
+function title(t){
+  b.fillStyle = C.navy; b.fillRect(0, 0, BW, BH); stars(t, 40, 100);
+  pxText('AROUND THE WORLD', 160, 22, C.yellow, 2, 'center', C.red);
+  pxText('IN 1,082 DAYS', 160, 44, C.yellow, 2, 'center', C.red);
+  pxText('THE MAGELLAN-ELCANO VOYAGE', 160, 70, C.white, 1, 'center');
+  pxText('1519-1522', 160, 82, C.lav, 1, 'center');
+  b.fillStyle = C.blue; b.fillRect(0, 140, BW, 40);
+  for (let x = 0; x < BW; x += 2){ const y = 140 + R(Math.sin(x * .12 + t * 4) * 2); b.fillStyle = C.white; b.fillRect(x, y, 2, 1); }
+  ship(144, 119 + R(Math.sin(t * 4) * 2), 3, false);
+  if (Math.floor(t * 3) % 2 === 0) pxText('PRESS START', 160, 162, C.white, 1, 'center');
+  pxText('STYLE SAMPLE', 4, 4, C.lav);
+  iris(t < .35 ? t / .35 * 200 : 999, 160, 90);
+  if (t > 1.7) iris((2 - t) / .3 * 200, 160, 90);
+}
+
+/* ---------- scene 2: the voyage on the map (2–17 s) ---------- */
+function voyage(T){
+  b.fillStyle = C.black; b.fillRect(0, 0, BW, BH);
+  b.drawImage(mapCv, 0, MTOP);
+  const ph = Math.floor(T * 4);                                  // twinkling wave pixels
+  b.fillStyle = C.blue;
+  for (let y = 0; y < MY; y += 2) for (let x = (y * 3 + ph) % 9; x < MX; x += 9) if (water[y * MX + x]) b.fillRect(x * 2, MTOP + y * 2, 1, 1);
+  const st = state(T);
+  // trail
+  b.fillStyle = C.yellow;
+  for (let i = 0; i <= st.li; i++){
+    const n = Math.ceil(legLen[i] / 2.4), upTo = i < st.li ? 1 : eOut(st.u) * .15 + st.u * .85;
+    for (let k = 0; k <= n; k++){ const u = k / n; if (u > upTo) break; if (k % 2) continue;
+      const [lo, la] = along(i, u); b.fillRect(R(px(lo)), R(py(la)), 1, 1); }
+  }
+  // stop flags
+  STOPS.forEach((s, i) => { if (i === 8 || T < s.at) return; const [lo, la] = i < 8 ? LEGS[i][0] : LEGS[7][LEGS[7].length - 1];
+    const x = R(px(lo)), y = R(py(la)); b.fillStyle = C.white; b.fillRect(x, y - 6, 1, 6); b.fillStyle = C.red; b.fillRect(x + 1, y - 6, 3, 2); });
+  // ship
+  const bob = R(Math.sin(T * 6));
+  ship(px(st.pos[0]) - 5, py(st.pos[1]) - 8 + bob, 1, st.west);
+  // HUD
+  b.fillStyle = C.black; b.fillRect(0, 0, BW, MTOP);
+  pxText('MAGELLAN-ELCANO VOYAGE', 4, 4, C.white);
+  pxText('DAY ' + String(st.day).padStart(4, '0'), 316, 4, C.yellow, 1, 'right');
+  // logbook panel
+  const py0 = MTOP + MY * 2;
+  b.fillStyle = C.navy; b.fillRect(0, py0, BW, BH - py0); b.fillStyle = C.lav; b.fillRect(0, py0, BW, 1);
+  if (st.si >= 0){
+    const s = STOPS[st.si], n = Math.floor((T - s.at) * 70);
+    let used = 0; const typed = s.t.map(line => { const k = clamp(n - used, 0, line.length); used += line.length; return line.slice(0, k); });
+    pxText(typed[0], 6, py0 + 4, C.yellow); pxText(typed[1], 6, py0 + 13, C.white); pxText(typed[2], 6, py0 + 22, C.peach);
+  }
+  const ships = st.si >= 0 ? STOPS[st.si].ships : 5;
+  pxText('FLEET', 312, py0 + 4, C.lav, 1, 'right');
+  for (let k = 0; k < 5; k++) ship(258 + k * 12, py0 + 15, 1, false, k >= ships);
+  const [sx, sy] = [px(st.pos[0]), py(st.pos[1])];
+  if (T < 2.35) iris((T - 2) / .35 * 220, sx, sy);
+  if (T > 16.7) iris((17 - T) / .3 * 220, sx, sy);
+}
+
+/* ---------- scene 3: the voyage in numbers (17–20 s) ---------- */
+function numbers(T){
+  const t = T - 17;
+  b.fillStyle = C.navy; b.fillRect(0, 0, BW, BH); stars(T, 30);
+  pxText('THE VOYAGE IN NUMBERS', 160, 10, C.yellow, 1, 'center', C.red);
+  // ships 5 → 1
+  pxText('SHIPS', 16, 38, C.lav);
+  for (let k = 0; k < 5; k++){ const lost = k > 0 && t > .3 + k * .15; ship(70 + k * 26, 30 + (lost ? 3 : 0), 2, false, lost); }
+  if (t > .95) pxText('5 > 1', 304, 38, C.white, 1, 'right');
+  // days counter + year bar
+  pxText('DAYS', 16, 78, C.lav);
+  const days = R(1082 * eOut(seg(t, .5, 1.4)));
+  pxText(days.toLocaleString('en-US'), 70, 70, C.white, 2);
+  const bx0 = 150, bw = 154, yrs = [['1519', 102], ['1520', 366], ['1521', 365], ['1522', 249]];
+  let xx = bx0, filled = bw * (days / 1082);
+  yrs.forEach(([y, d], i) => { const w = R(bw * d / 1082); b.fillStyle = C.dgray; b.fillRect(xx, 74, w - 1, 8);
+    b.fillStyle = [C.blue, C.lime, C.orange, C.pink][i]; b.fillRect(xx, 74, clamp(filled - (xx - bx0), 0, w - 1), 8);
+    pxText(y, i ? xx + w / 2 : bx0 - 3, 86, C.lav, 1, i ? 'center' : 'right'); xx += w; });
+  // crew dots
+  pxText('CREW', 16, 118, C.lav);
+  const home = t > 1.6;
+  for (let k = 0; k < 250; k++){ const cx = 70 + (k % 50) * 3, cy = 108 + Math.floor(k / 50) * 4;
+    b.fillStyle = home ? (k < 18 ? C.yellow : C.dgray) : (t > 1.2 ? C.white : C.dgray); b.fillRect(cx, cy, 2, 2); }
+  if (home) pxText('18 CAME HOME', 304, 118, C.yellow, 1, 'right');
+  pxText('ONE DOT = ONE SAILOR (ABOUT 250 SET OUT;', 160, 150, C.lav, 1, 'center');
+  pxText('ESTIMATES RANGE FROM 237 TO 270)', 160, 160, C.lav, 1, 'center');
+  if (t < .3) iris(t / .3 * 220, 160, 90);
+  if (t > 2.7) iris((3 - t) / .3 * 220, 160, 90);
+}
+
+/* ---------- render + playback ---------- */
+function render(T){
+  b.imageSmoothingEnabled = false;
+  if (T < 2) title(T); else if (T < 17) voyage(T); else numbers(T);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.14)';
+  for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+}
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px';
+  cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr);
+}
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
