@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixel Stickman</title>
+<style>
+  html,body{margin:0;height:100%;background:#111;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second pixel-art stick-figure comic: a stickman codes at midnight, a bug escapes the screen, he chases and squashes it, and the build passes."></canvas>
+<script>
+'use strict';
+/* Style sample: pixel art × stick-figure comic (20 s loop).
+   The stickman is a tiny skeleton: joint angles per pose, limbs drawn as 2-px pixel lines.
+   Click = pause. ?t=10 opens paused at 10 s. */
+const BW = 320, BH = 180, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH; const b = buf.getContext('2d');
+const C = { ink:'#1a1a1a', paper:'#fdf6e3', red:'#e63946', yellow:'#ffd23f', navy:'#1d3557', green:'#2a9d8f', lime:'#80ed99', gray:'#8d8d8d', wood:'#b5835a', sky:'#264b7a', white:'#ffffff' };
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const R = Math.round;
+const hash = (a, c = 0) => { const s = Math.sin(a * 127.1 + c * 311.7) * 43758.5453; return s - Math.floor(s); };
+
+/* ---------- pixel font ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+G['#'] = [' # # ', '#####', ' # # ', ' # # ', '#####', ' # # ', '     '];
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left'){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x; x0 = R(x0); y = R(y); b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue; for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+function sfx(s, x, y, sc, fill, rot = 0){                      // comic sound effect: thick black outline
+  for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-2, -2], [2, 2], [-2, 2], [2, -2], [3, 3]]) pxText(s, x + dx, y + dy + rot, C.ink, sc, 'center');
+  pxText(s, x, y + rot, fill, sc, 'center');
+}
+function pxLine(x0, y0, x1, y1, col, th = 1){
+  x0 = R(x0); y0 = R(y0); x1 = R(x1); y1 = R(y1); b.fillStyle = col;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let e = dx + dy;
+  for (let n = 0; n < 1000; n++){ b.fillRect(x0, y0, th, th); if (x0 === x1 && y0 === y1) break; const e2 = 2 * e; if (e2 >= dy){ e += dy; x0 += sx; } if (e2 <= dx){ e += dx; y0 += sy; } }
+}
+function pxRing(cx, cy, r, col, fill){
+  cx = R(cx); cy = R(cy);
+  if (fill){ b.fillStyle = fill; for (let y = -r; y <= r; y++){ const w = Math.floor(Math.sqrt(r * r - y * y + r * .8)); b.fillRect(cx - w, cy + y, w * 2 + 1, 1); } }
+  b.fillStyle = col; for (let a = 0; a < 64; a++){ const t = a / 64 * Math.PI * 2; b.fillRect(R(cx + Math.cos(t) * r), R(cy + Math.sin(t) * r), 1, 1); }
+}
+function box(x, y, w, h, fill, border = C.ink){ b.fillStyle = border; b.fillRect(x, y, w, h); b.fillStyle = fill; b.fillRect(x + 1, y + 1, w - 2, h - 2); }
+function dither(x, y, w, h, col){ b.fillStyle = col; for (let j = 0; j < h; j++) for (let i = (j % 2); i < w; i += 2) if (j % 2 === 0 || i % 4 === 1) b.fillRect(x + i, y + j, 1, 1); }
+function bubble(lines, x, y, tx, ty){
+  const w = Math.max(...lines.map(l => textW(l))) + 10, h = lines.length * 9 + 6, x0 = R(x - w / 2), y0 = R(y - h / 2);
+  b.fillStyle = C.white; for (let k = 0; k < 6; k++) pxLine(lerp(x - 5, x + 5, k / 5), y0 + h - 1, tx, ty, C.white);
+  pxLine(x - 6, y0 + h - 1, tx, ty, C.ink); pxLine(x + 6, y0 + h - 1, tx, ty, C.ink);
+  b.fillStyle = C.ink; b.fillRect(x0 + 1, y0, w - 2, h); b.fillRect(x0, y0 + 1, w, h - 2);
+  b.fillStyle = C.white; b.fillRect(x0 + 1, y0 + 1, w - 2, h - 2);
+  for (let k = -5; k <= 5; k++) b.fillRect(R(x + k), y0 + h - 1, 1, 1);
+  lines.forEach((l, i) => pxText(l, x, y0 + 4 + i * 9, C.ink, 1, 'center'));
+}
+function caption(s, x, y){ box(x, y, textW(s) + 8, 12, C.yellow); pxText(s, x + 4, y + 3, C.ink); }
+
+/* ---------- the stickman: a 2-D skeleton ---------- */
+const LEN = { torso:18, upper:9, lower:9, thigh:12, shin:12, head:5 };
+const dir = (a, f) => [Math.sin(a) * f, Math.cos(a)];          // angle 0 = straight down, + = forward
+function stick(hx, hy, P, col = C.ink){
+  const f = P.face ?? 1, tor = P.torso ?? 0;
+  const neck = [hx + Math.sin(tor) * LEN.torso * f, hy - Math.cos(tor) * LEN.torso];
+  const head = [neck[0] + Math.sin(tor) * 6 * f, neck[1] - 6];
+  const sh = [lerp(hx, neck[0], .88), lerp(hy, neck[1], .88)];
+  const limb = (o, a1, a2, l1, l2, c) => { const d1 = dir(a1, f), m = [o[0] + d1[0] * l1, o[1] + d1[1] * l1], d2 = dir(a2, f), e = [m[0] + d2[0] * l2, m[1] + d2[1] * l2]; pxLine(o[0], o[1], m[0], m[1], c, 2); pxLine(m[0], m[1], e[0], e[1], c, 2); return e; };
+  const back = '#555555';
+  limb([hx, hy], P.lB[0], P.lB[1], LEN.thigh, LEN.shin, back); limb(sh, P.aB[0], P.aB[1], LEN.upper, LEN.lower, back);
+  pxLine(hx, hy, neck[0], neck[1], col, 2);
+  const feet = limb([hx, hy], P.lF[0], P.lF[1], LEN.thigh, LEN.shin, col); const hand = limb(sh, P.aF[0], P.aF[1], LEN.upper, LEN.lower, col);
+  pxRing(head[0], head[1], LEN.head, col, C.white); pxRing(head[0], head[1], LEN.head - 1, col);
+  b.fillStyle = col; b.fillRect(R(head[0] + 2 * f), R(head[1] - 1), 1, P.eyes === 'big' ? 2 : 1);
+  if (P.mouth === 'o'){ b.fillRect(R(head[0] + 2 * f), R(head[1] + 2), 1, 1); }
+  else if (P.mouth === 'smile'){ b.fillRect(R(head[0] + 1 * f), R(head[1] + 2), 1, 1); b.fillRect(R(head[0] + 2 * f), R(head[1] + 2), 1, 1); b.fillRect(R(head[0] + 3 * f), R(head[1] + 1), 1, 1); }
+  return { head, hand, feet };
+}
+const POSE = {
+  sit:(t) => ({ torso:.12, lF:[1.5, 0], lB:[1.4, .05], aF:[1.1, 1.75 + .18 * Math.sin(t * 28)], aB:[1.0, 1.7 + .18 * Math.sin(t * 28 + 2)] }),
+  stand:() => ({ torso:0, lF:[.12, 0], lB:[-.12, 0], aF:[.25, .15], aB:[-.25, -.1] }),
+  scared:(t) => ({ torso:-.25, lF:[.25, -.1], lB:[-.2, 0], aF:[2.6, 2.9], aB:[2.3, 2.6], eyes:'big', mouth:'o' }),
+  run:(t) => { const s = Math.sin(t * 16); return { torso:.35, lF:[s * .9, s > 0 ? .3 : 1.3], lB:[-s * .9, -s > 0 ? .3 : 1.3], aF:[-s * .9, -s * .9 + 1.4], aB:[s * .9, s * .9 + 1.4], mouth:'o' }; },
+  jump:() => ({ torso:.2, lF:[1.4, -.2], lB:[1.1, -.4], aF:[2.8, 2.9], aB:[2.5, 2.7], mouth:'o', eyes:'big' }),
+  squat:() => ({ torso:.35, lF:[1.3, -.4], lB:[1.1, -.5], aF:[1.2, .6], aB:[.9, .4], mouth:'smile' }),
+  cheer:(t) => { const s = Math.sin(t * 10); return { torso:.05 * s, lF:[.25, 0], lB:[-.25, 0], aF:[2.7 + .3 * s, 3.0 + .3 * s], aB:[2.7 - .3 * s, 3.0 - .3 * s], mouth:'smile' }; },
+  bow:(t) => { const d = Math.max(0, Math.sin(t * 3)); return { torso:.1 + d * .9, lF:[.1, 0], lB:[-.1, 0], aF:[.2 + d * .5, .1 + d * .6], aB:[-.2, -.1], mouth:'smile' }; },
+};
+
+/* ---------- bug sprite ---------- */
+function bug(x, y, t, face = 1, flat = false){
+  x = R(x); y = R(y);
+  if (flat){ b.fillStyle = C.green; b.fillRect(x - 7, y - 1, 14, 2); b.fillRect(x - 4, y - 2, 8, 1); b.fillStyle = C.ink; b.fillRect(x - 2, y - 2, 1, 1); b.fillRect(x + 2, y - 2, 1, 1); return; }
+  const l = Math.floor(t * 12) % 2;
+  b.fillStyle = C.ink; for (let k = -1; k <= 1; k++){ b.fillRect(x + k * 3, y - 1, 1, 2); b.fillRect(x + k * 3 + (l ? 1 : -1), y + 1, 1, 1); }
+  b.fillStyle = C.red; b.fillRect(x - 4, y - 5, 8, 4); b.fillRect(x - 3, y - 6, 6, 1);
+  b.fillStyle = C.ink; b.fillRect(x, y - 6, 1, 5); b.fillRect(x - 3, y - 4, 1, 1); b.fillRect(x + 2, y - 3, 1, 1);
+  b.fillRect(x + 4 * face, y - 5, 2, 3); b.fillStyle = C.white; b.fillRect(x + 5 * face, y - 5, 1, 1);
+  b.fillStyle = C.ink; b.fillRect(x + 6 * face, y - 8, 1, 3); b.fillRect(x + 7 * face, y - 9, 1, 1);
+}
+
+/* ---------- the room ---------- */
+function room(t, screen){
+  b.fillStyle = C.paper; b.fillRect(0, 0, BW, BH);
+  dither(10, 22, 300, 128, '#e9dfc6');
+  b.fillStyle = '#e4d6b8'; b.fillRect(10, 150, 300, 20); dither(10, 150, 300, 20, '#cdbb96');
+  pxLine(10, 150, 310, 150, C.ink);
+  box(30, 40, 56, 44, C.sky); b.fillStyle = C.ink; b.fillRect(57, 40, 2, 44); b.fillRect(30, 61, 56, 2);
+  pxRing(44, 51, 5, '#fff3b0', '#fff3b0'); b.fillStyle = C.sky; b.fillRect(46, 47, 4, 6);
+  for (const [x, y] of [[70, 47], [78, 55], [66, 72], [40, 74]]){ b.fillStyle = Math.sin(t * 4 + x) > 0 ? C.white : C.yellow; b.fillRect(x, y, 1, 1); }
+  box(122, 136, 20, 3, C.wood); pxLine(122, 136, 122, 110, C.ink, 2); pxLine(124, 139, 124, 150, C.ink); pxLine(140, 139, 140, 150, C.ink);
+  box(150, 125, 124, 4, C.wood); pxLine(154, 129, 154, 150, C.ink, 2); pxLine(268, 129, 268, 150, C.ink, 2);
+  dither(156, 130, 110, 20, '#b8a987');
+  box(152, 122, 26, 3, C.gray);
+  b.fillStyle = C.ink; b.fillRect(213, 114, 4, 11); b.fillRect(204, 123, 22, 2);
+  box(178, 76, 74, 40, C.ink);
+  const sc = screen(t); b.fillStyle = sc.bg; b.fillRect(180, 78, 70, 36); sc.draw();
+  box(282, 108, 14, 17, C.white); b.fillStyle = C.ink; b.fillRect(296, 111, 3, 1); b.fillRect(298, 111, 1, 6); b.fillRect(296, 116, 3, 1);
+  if (Math.sin(t * 3) > 0){ b.fillStyle = C.gray; b.fillRect(287, 104, 1, 2); b.fillRect(289, 101, 1, 2); }
+}
+const codeScreen = t => ({ bg:C.navy, draw:() => { const n = Math.floor(t * 6); for (let i = 0; i < 6; i++){ const k = n + i, w = 10 + hash(k, 1) * 44; b.fillStyle = [C.lime, C.yellow, '#9ad1ff', C.white][k % 4]; b.fillRect(183 + (k % 3) * 4, 81 + i * 5, R(w * (i === 5 ? (t * 6) % 1 : 1)), 2); } } });
+const errScreen = t => ({ bg:Math.floor(t * 6) % 2 ? C.red : '#8b1e2a', draw:() => pxText('ERROR', 215, 92, C.white, 1, 'center') });
+const okScreen = () => ({ bg:C.green, draw:() => { pxText('BUILD', 215, 83, C.white, 1, 'center'); pxText('PASSED', 215, 93, C.white, 1, 'center'); pxLine(207, 106, 211, 110, C.white, 2); pxLine(211, 110, 222, 101, C.white, 2); } });
+
+/* ---------- panels ---------- */
+function panel1(t){
+  room(t, codeScreen);
+  stick(132, 136, POSE.sit(t));
+  caption('MIDNIGHT. ONE LAST LINE...', 14, 24);
+  if (t > 1.3) bubble(['ALMOST', 'DONE!'], 112, 84, 128, 104);
+}
+function panel2(t){
+  const lt = t - 4, err = lt > .3;
+  room(t, err ? errScreen : codeScreen);
+  if (lt < 1.2) stick(132, 136, POSE.sit(t));
+  else { const u = seg(lt, 1.2, 1.5), x = lerp(132, 104, u), y = 150 - 24 - Math.sin(u * Math.PI) * 14 + (u < 1 ? 0 : 0); stick(x, lerp(136, 126, u) - Math.sin(u * Math.PI) * 12, u < 1 ? POSE.jump() : POSE.scared(t), C.ink); }
+  if (err && lt < 2.2) sfx('BZZT!', 262, 58 + (Math.floor(t * 20) % 2), 2, C.yellow);
+  if (lt > 1.0){ const u = seg(lt, 1.0, 3.6); const bx = u < .3 ? lerp(214, 200, u / .3) : u < .45 ? 200 : lerp(200, 150, (u - .45) / .55), by = u < .3 ? 116 : u < .45 ? lerp(116, 149, (u - .3) / .15) : 149; bug(bx, u < .3 ? 124 : by, t, -1); }
+  if (lt > 1.6){ b.fillStyle = C.red; pxText('!', 104, 84 + (Math.floor(t * 8) % 2), C.red, 2, 'center'); }
+  if (lt > 2.1) bubble(['A BUG?!'], 70, 70, 96, 92);
+  caption('THEN...', 14, 24);
+}
+function panel3(t){
+  const lt = t - 8;
+  b.fillStyle = C.paper; b.fillRect(0, 0, BW, BH); dither(10, 22, 300, 128, '#e9dfc6');
+  b.fillStyle = '#e4d6b8'; b.fillRect(10, 150, 300, 20); dither(10, 150, 300, 20, '#cdbb96'); pxLine(10, 150, 310, 150, C.ink);
+  for (let k = 0; k < 6; k++){ const x = ((k * 70 - lt * 90) % 360 + 360) % 360 - 20; box(R(x), 60, 30, 50, '#efe4cc', '#c7b38e'); }
+  const landT = 3.5, bx = lt < landT ? 40 + lt * 55 : 40 + landT * 55;
+  if (lt < landT) bug(bx, 149, t, 1); else bug(bx, 150, t, 1, true);
+  let hx, hy, pose;
+  if (lt < 3.0){ hx = bx - 34; hy = 126 - Math.abs(Math.sin(t * 16)) * 2; pose = POSE.run(t); for (let k = 0; k < 4; k++){ b.fillStyle = C.gray; b.fillRect(R(hx - 30 - k * 6), R(112 + k * 6), 14, 1); } }
+  else if (lt < landT){ const u = seg(lt, 3.0, landT); hx = lerp(bx - 34, bx, u); hy = 126 - Math.sin(u * Math.PI) * 34; pose = POSE.jump(); }
+  else { hx = bx; hy = lt < landT + .3 ? 132 : 126; pose = lt < landT + .3 ? POSE.squat() : POSE.cheer(t); }
+  stick(hx, hy, pose);
+  if (lt > landT && lt < landT + 1.2){ const s = Math.floor(t * 10) % 2; for (let k = 0; k < 8; k++){ const a = k / 8 * Math.PI * 2; pxLine(bx + Math.cos(a) * 10, 146 + Math.sin(a) * 6, bx + Math.cos(a) * (18 + s * 3), 146 + Math.sin(a) * (10 + s * 2), C.yellow, 2); }
+    sfx('SQUISH!', bx - 10, 40, 3, C.lime); }
+  if (lt > landT + 1.0) bubble(['GOTCHA!'], bx - 56, 96, bx - 8, 106);
+  caption('THE CHASE', 14, 24);
+}
+function panel4(t){
+  const lt = t - 13;
+  room(t, okScreen);
+  stick(110, 126 - Math.abs(Math.sin(t * 10)) * 4, POSE.cheer(t));
+  for (let i = 0; i < 40; i++){ const x = 12 + (i * 53) % 296, y = 22 + ((lt * (30 + (i % 7) * 8) + i * 17) % 128); b.fillStyle = [C.red, C.yellow, C.green, '#4ea8de'][i % 4]; b.fillRect(R(x + Math.sin(t * 3 + i) * 3), R(y), 2, 2); }
+  if (lt > .8) bubble(['SHIP IT!'], 80, 72, 102, 96);
+  caption('3 AM. ALL TESTS GREEN.', 14, 24);
+}
+function panel5(t){
+  const lt = t - 17;
+  b.fillStyle = C.paper; b.fillRect(0, 0, BW, BH); dither(10, 22, 300, 148, '#efe4cc');
+  for (let k = 0; k < 16; k++){ const a = k / 16 * Math.PI * 2 + t * .3; pxLine(160, 80, 160 + Math.cos(a) * 220, 80 + Math.sin(a) * 220, '#f1e2b8', 3); }
+  sfx('THE END', 160, 50, 4, C.yellow);
+  stick(160, 123, POSE.bow(t)); pxLine(60, 148, 260, 148, C.ink);
+  if (lt > 1.4){ const px = lerp(318, 292, seg(lt, 1.4, 1.8)); bug(px, 146, t, -1); if (lt > 1.9) pxText('?', px - 2, 128, C.red, 1); }
+  pxText('PIXEL STICK - STYLE SAMPLE', 160, 158, C.ink, 1, 'center');
+}
+
+/* ---------- page chrome, transitions, output ---------- */
+const PANELS = [[0, panel1], [4, panel2], [8, panel3], [13, panel4], [17, panel5]];
+function render(t){
+  b.imageSmoothingEnabled = false;
+  let i = 0; PANELS.forEach(([s], k) => { if (t >= s) i = k; });
+  PANELS[i][1](t);
+  b.fillStyle = C.ink; b.fillRect(0, 0, BW, 20); b.fillRect(0, 170, BW, 10); b.fillRect(0, 0, 10, BH); b.fillRect(310, 0, 10, BH);
+  b.fillStyle = C.paper; b.fillRect(8, 18, 304, 2); b.fillRect(8, 170, 304, 2); b.fillRect(8, 18, 2, 154); b.fillRect(310, 18, 2, 154);
+  pxText('PIXEL STICK #1', 10, 6, C.white); pxText(`PANEL ${i + 1}/5`, 310, 6, C.yellow, 1, 'right');
+  const since = t - PANELS[i][0]; if (since < .25 && t > .1){ const w = R(eOut(since / .25) * 300); b.fillStyle = C.ink; b.fillRect(10 + w, 20, 300 - w, 150); }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false; ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.08)'; for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+}
+function resize(){ const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px'; cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr); }
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now; if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
