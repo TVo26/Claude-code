@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ink Brush Haiku</title>
+<style>
+  html,body{margin:0;height:100%;background:#d9d0bf;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;box-shadow:0 10px 40px rgba(60,40,20,.25);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second ink and brush style sample illustrating Basho's old pond haiku: an enso circle, reeds, a frog leaping into the water and spreading ripples."></canvas>
+<script>
+'use strict';
+/* Style sample: ink / sumi-e brush (20 s loop).
+   Bashō's "old pond" haiku (1686). Every brush stroke is built from code:
+   a tapered ink body, then individual bristle lines that break up into dry brush.
+   Click = pause. ?t=8 opens paused at 8 s. */
+const W = 1280, H = 720, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let K = 1;
+const INK = '26,23,22', RED = '#b8322a', PAPER = '#f2ead9';
+const SERIF = '"Cormorant Garamond","EB Garamond",Garamond,"Iowan Old Style","Palatino Linotype",Georgia,serif';
+
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eIO = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const TAU = Math.PI * 2;
+
+/* deterministic value noise: ink never "boils", it stays where it was painted */
+const hash = (a, b) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return s - Math.floor(s); };
+function noise(id, x){ const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return lerp(hash(id, i), hash(id, i + 1), u); }
+
+/* ---------- paper ---------- */
+const paperCv = document.createElement('canvas');
+function buildPaper(){
+  paperCv.width = W * K; paperCv.height = H * K; const p = paperCv.getContext('2d'); p.scale(K, K);
+  p.fillStyle = PAPER; p.fillRect(0, 0, W, H);
+  for (let i = 0; i < 1400; i++){ const x = hash(i, 1) * W, y = hash(i, 2) * H, a = hash(i, 3) * TAU, l = 4 + hash(i, 4) * 18;
+    p.strokeStyle = `rgba(150,120,80,${.05 + hash(i, 5) * .07})`; p.lineWidth = .6; p.beginPath(); p.moveTo(x, y);
+    p.quadraticCurveTo(x + Math.cos(a) * l * .5 + 3, y + Math.sin(a) * l * .5, x + Math.cos(a) * l, y + Math.sin(a) * l); p.stroke(); }
+  for (let i = 0; i < 3000; i++){ p.fillStyle = `rgba(120,95,60,${hash(i, 7) * .06})`; p.fillRect(hash(i, 8) * W, hash(i, 9) * H, 1.2, 1.2); }
+  const g = p.createRadialGradient(W / 2, H / 2, H * .3, W / 2, H / 2, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(110,80,40,.16)');
+  p.fillStyle = g; p.fillRect(0, 0, W, H);
+}
+
+/* ---------- brush ---------- */
+function crSample(c, n){
+  const out = [];
+  for (let i = 0; i < c.length - 1; i++){
+    const p0 = c[Math.max(0, i - 1)], p1 = c[i], p2 = c[i + 1], p3 = c[Math.min(c.length - 1, i + 2)];
+    const steps = Math.ceil(n / (c.length - 1));
+    for (let s = 0; s < steps; s++){ const t = s / steps, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(k => .5 * ((2 * p1[k]) + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3))); }
+  }
+  out.push(c[c.length - 1]); return out;
+}
+/* id: stroke seed · ctrl: control points · p: how much is painted (0–1) · w: max width
+   o.dry: where dry brush takes over · o.tin/o.tout: taper lengths · o.a: ink density */
+function brush(id, ctrl, p, w, o = {}){
+  if (p <= 0) return;
+  const pts = crSample(ctrl, o.n || 90), N = pts.length - 1, m = Math.max(1, Math.floor(clamp(p) * N));
+  const dry = o.dry ?? .75, tin = o.tin ?? .06, tout = o.tout ?? .3, a = o.a ?? .9;
+  const nor = [], wid = [];
+  for (let i = 0; i <= m; i++){
+    const q0 = pts[Math.max(0, i - 1)], q1 = pts[Math.min(N, i + 1)], dx = q1[0] - q0[0], dy = q1[1] - q0[1], l = Math.hypot(dx, dy) || 1;
+    nor.push([-dy / l, dx / l]); const u = i / N;
+    const ti = Math.pow(Math.sin(Math.min(1, u / tin) * Math.PI / 2), .7), to = u > 1 - tout ? Math.pow((1 - u) / tout, .55) : 1;
+    wid.push(w * Math.max(.08, ti * to) * (.82 + .36 * noise(id, u * 9)));
+  }
+  const bodyEnd = Math.min(m, Math.floor(dry * N));
+  if (bodyEnd > 1){
+    for (const [grow, al] of [[1.18, a * .16], [1, a]]){
+      ctx.fillStyle = `rgba(${INK},${al})`; ctx.beginPath();
+      for (let i = 0; i <= bodyEnd; i++){ const r = wid[i] / 2 * grow * (1 + .08 * (noise(id + 5, i * .7) - .5)); ctx.lineTo(pts[i][0] + nor[i][0] * r, pts[i][1] + nor[i][1] * r); }
+      for (let i = bodyEnd; i >= 0; i--){ const r = wid[i] / 2 * grow * (1 + .08 * (noise(id + 9, i * .7) - .5)); ctx.lineTo(pts[i][0] - nor[i][0] * r, pts[i][1] - nor[i][1] * r); }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  const B = o.bristles || Math.max(5, Math.min(16, Math.round(w / 2.2)));
+  ctx.lineCap = 'round';
+  for (let k = 0; k < B; k++){
+    const off = (k / (B - 1) - .5) * .95; ctx.lineWidth = Math.max(.7, w / B * 1.25);
+    ctx.strokeStyle = `rgba(${INK},${a * (.55 + .4 * hash(id, k))})`; ctx.beginPath(); let down = false;
+    for (let i = 0; i <= m; i++){
+      const u = i / N, dryAmt = u < dry ? .04 : lerp(.15, .85, (u - dry) / (1 - dry));
+      const on = noise(id * 13 + k * 7, u * 14) > dryAmt;
+      const x = pts[i][0] + nor[i][0] * off * wid[i], y = pts[i][1] + nor[i][1] * off * wid[i];
+      if (on){ down ? ctx.lineTo(x, y) : ctx.moveTo(x, y); down = true; } else down = false;
+    }
+    ctx.stroke();
+  }
+}
+function blob(id, cx, cy, rx, ry, rot, a = .9){
+  for (const [g, al] of [[1.15, a * .18], [1, a]]){
+    ctx.fillStyle = `rgba(${INK},${al})`; ctx.beginPath();
+    for (let i = 0; i <= 28; i++){ const t = i / 28 * TAU, r = 1 + .12 * (noise(id, i % 28 * .9) - .5);
+      const x = Math.cos(t) * rx * r * g, y = Math.sin(t) * ry * r * g;
+      ctx.lineTo(cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)); }
+    ctx.fill();
+  }
+}
+function wash(cx, cy, r, a, sy = 1){
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(1, sy);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r); g.addColorStop(0, `rgba(${INK},${a})`); g.addColorStop(.7, `rgba(${INK},${a * .45})`); g.addColorStop(1, `rgba(${INK},0)`);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); ctx.restore();
+}
+
+/* ---------- the painting ---------- */
+const PC = [830, 350], PR = 205;                     // ensō (the pond) center + radius
+const ENSO = (() => { const c = []; for (let i = 0; i <= 11; i++){ const a = -1.75 + i / 11 * (TAU * .92); const r = PR * (1 + .03 * Math.sin(i * 2.1)); c.push([PC[0] + Math.cos(a) * r, PC[1] + Math.sin(a) * r]); } return c; })();
+const STONE = [705, 478], SPLASH = [842, 488];
+
+function frog(x, y, s, pose, a){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  if (pose === 'sit'){
+    blob(41, 0, 0, 21, 14, -.18, a); blob(42, 15, -9, 12, 9, .1, a);
+    blob(43, 13, -18, 4.8, 4.6, 0, a); blob(44, 22, -16, 4.2, 4, 0, a);
+    brush(45, [[-12, 3], [-24, 10], [-20, 16], [-6, 15]], 1, 7, { dry:.9, a });
+    brush(46, [[12, 6], [15, 12], [19, 15]], 1, 5, { dry:.9, a });
+    ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(14.5, -19.5, 1.6, 0, TAU); ctx.arc(23, -17.3, 1.4, 0, TAU); ctx.fill();
+  } else {
+    blob(41, 0, 0, 24, 11, 0, a); blob(42, 20, -3, 11, 8, .15, a); blob(43, 22, -11, 4.5, 4.3, 0, a);
+    brush(47, [[-18, 2], [-34, 8], [-50, 12]], 1, 6, { dry:.85, a });
+    brush(48, [[-16, -2], [-33, -4], [-48, -2]], 1, 5, { dry:.85, a });
+    brush(49, [[14, 5], [24, 10], [32, 12]], 1, 4.5, { dry:.9, a });
+    ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(23.5, -12.5, 1.5, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function painting(t){
+  // ensō, the pond
+  brush(1, ENSO, eIO(seg(t, .2, 2.2)), 30, { dry:.6, tout:.35, n:160 });
+  // water lines
+  [[[700, 470], [760, 468], [800, 471]], [[860, 496], [930, 493], [985, 497]], [[745, 520], [820, 517], [880, 521]], [[900, 452], [950, 450], [975, 453]]]
+    .forEach((c, i) => brush(10 + i, c, eOut(seg(t, 2.4 + i * .25, 3.0 + i * .25)), 4.5, { dry:.45, tout:.5, a:.7 }));
+  // stone
+  const st = seg(t, 3.0, 3.6);
+  if (st > 0){ ctx.globalAlpha = st; wash(STONE[0], STONE[1] + 4, 52, .22, .45); blob(20, STONE[0], STONE[1], 40, 17, .04, .55);
+    brush(21, [[STONE[0] - 36, STONE[1] - 6], [STONE[0] - 5, STONE[1] - 16], [STONE[0] + 34, STONE[1] - 8]], 1, 8, { dry:.7 }); ctx.globalAlpha = 1; }
+  // reeds
+  const reeds = [[[965, 585], [975, 450], [990, 330], [1004, 240]], [[990, 590], [995, 470], [1012, 360], [1036, 290]], [[942, 588], [944, 490], [950, 405]]];
+  reeds.forEach((c, i) => brush(30 + i, c, eOut(seg(t, 3.3 + i * .3, 4.3 + i * .3)), 8 - i, { dry:.7, tout:.45 }));
+  [[[975, 430], [1020, 395], [1060, 400]], [[993, 400], [955, 350], [930, 330]], [[946, 470], [915, 430], [905, 395]]]
+    .forEach((c, i) => brush(35 + i, c, eOut(seg(t, 4.2 + i * .2, 4.8 + i * .2)), 6, { dry:.65, tout:.5, tin:.25, a:.8 }));
+  // frog: appears, waits, leaps
+  if (t >= 5.2 && t < 7.7){
+    const a = seg(t, 5.2, 6.2) * .92;
+    if (t < 7.0) frog(STONE[0] + 4, STONE[1] - 26 + Math.sin(t * 3) * .6, 1, 'sit', a);
+    else { const u = seg(t, 7.0, 7.7), x = lerp(STONE[0] + 4, SPLASH[0], u), y = lerp(STONE[1] - 26, SPLASH[1], u) - Math.sin(u * Math.PI) * 95;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(lerp(-.55, .9, u)); frog(0, 0, 1, 'jump', .92); ctx.restore(); }
+  }
+  // splash droplets
+  if (t > 7.7 && t < 8.6) for (let i = 0; i < 9; i++){ const u = seg(t, 7.7, 8.6), ang = -Math.PI / 2 + (i - 4) * .32, sp = 60 + hash(i, 3) * 50;
+    const x = SPLASH[0] + Math.cos(ang) * sp * u, y = SPLASH[1] + Math.sin(ang) * sp * u + 160 * u * u;
+    blob(60 + i, x, y, 2.6 + hash(i, 4) * 2, 2.4 + hash(i, 5) * 2, 0, .8 * (1 - u)); }
+  // ripples, clipped to the pond
+  ctx.save(); ctx.beginPath(); ctx.arc(PC[0], PC[1], PR - 16, 0, TAU); ctx.clip();
+  for (let k = 0; k < 5; k++){
+    const u = t - (7.75 + k * .5); if (u < 0 || u > 3.6) continue;
+    const rx = 14 + u * 62, ry = rx * .27, a = .75 * (1 - u / 3.6), pts = [];
+    for (let i = 0; i <= 40; i++){ const th = i / 40 * TAU; pts.push([SPLASH[0] + Math.cos(th) * rx, SPLASH[1] + Math.sin(th) * ry]); }
+    brush(70 + k, pts, 1, 3.4 - k * .3, { dry:.55, tout:.2, tin:.1, a, bristles:4, n:80 });
+  }
+  if (t > 7.75) wash(SPLASH[0], SPLASH[1], 40 + Math.min(4, t - 7.75) * 30, .07 * (1 - seg(t, 10, 14)), .3);
+  ctx.restore();
+  // moon
+  const mo = seg(t, 11.5, 13);
+  if (mo > 0){ ctx.globalAlpha = mo; wash(885, 238, 52, .16); ctx.strokeStyle = `rgba(${INK},.35)`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(885, 238, 34, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1; }
+}
+
+/* ---------- words ---------- */
+function type(s, x, y, t0, t1, t, size, col, style = 'italic '){
+  const n = s.length, u = seg(t, t0, t1) * n; let cx = x;
+  ctx.font = `${style}${size}px ${SERIF}`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  for (let i = 0; i < n; i++){ const a = clamp(u - i); if (a <= 0) break; ctx.fillStyle = `rgba(${col},${a})`; ctx.fillText(s[i], cx, y); cx += ctx.measureText(s[i]).width; }
+}
+function words(t){
+  const ta = seg(t, .8, 1.8);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.font = `italic 50px ${SERIF}`; ctx.fillStyle = `rgba(${INK},${ta})`; ctx.fillText('The Old Pond', 118, 176);
+  ctx.font = `15px ${SERIF}`; ctx.fillStyle = `rgba(${INK},${ta * .65})`;
+  const sub = 'MATSUO BASHŌ  ·  1686'; let x = 120; for (const ch of sub){ ctx.fillText(ch, x, 210); x += ctx.measureText(ch).width + 3; }
+  brush(90, [[118, 238], [200, 234], [292, 238]], eOut(seg(t, 1.3, 2.0)), 6, { dry:.5, tout:.5, a:.85 });
+  const L = [['An old pond —', 'furuike ya', 2.2], ['a frog jumps in,', 'kawazu tobikomu', 5.0], ['the sound of water.', 'mizu no oto', 9.0]];
+  L.forEach(([en, ro, t0], i) => { const y = 330 + i * 86;
+    type(en, 120, y, t0, t0 + 1.3, t, 36, INK);
+    type(ro, 122, y + 30, t0 + .8, t0 + 1.8, t, 17, '120,105,90', ''); });
+  // seal
+  const sp = seg(t, 14, 14.35);
+  if (sp > 0){
+    const s = lerp(1.25, 1, eOut(sp)); ctx.save(); ctx.translate(1080, 590); ctx.scale(s, s); ctx.globalAlpha = sp;
+    ctx.fillStyle = RED; ctx.beginPath();
+    for (let i = 0; i < 40; i++){ const side = Math.floor(i / 10), f = (i % 10) / 10, j = (noise(300 + side, f * 8) - .5) * 2.5;
+      const pts = [[-28 + f * 56, -28 + j], [28 + j, -28 + f * 56], [28 - f * 56, 28 + j], [-28 + j, 28 - f * 56]][side]; ctx.lineTo(pts[0], pts[1]); }
+    ctx.fill();
+    ctx.strokeStyle = PAPER; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(0, -4, 12, Math.PI * .1, Math.PI * 1.85); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-17, 15); ctx.bezierCurveTo(-9, 9, -3, 21, 5, 15); ctx.bezierCurveTo(10, 11, 14, 17, 18, 14); ctx.stroke();
+    ctx.fillStyle = PAPER; for (let i = 0; i < 26; i++) ctx.fillRect(-27 + hash(i, 11) * 54, -27 + hash(i, 12) * 54, 1.4, 1.4);
+    ctx.restore();
+  }
+  const ca = seg(t, 13.5, 14.5);
+  if (ca > 0){ ctx.font = `italic 14px ${SERIF}`; ctx.fillStyle = `rgba(120,105,90,${ca})`; ctx.fillText('ink & brush · style sample', 120, 650); }
+}
+
+/* ---------- render + playback ---------- */
+function render(t){
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(paperCv, 0, 0);
+  ctx.setTransform(K, 0, 0, K, 0, 0); ctx.globalAlpha = 1;
+  painting(t); words(t);
+  const f = seg(t, 17.3, 19.4);                  // the paper "absorbs" the ink before the loop
+  if (f > 0){ ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = eIO(f); ctx.drawImage(paperCv, 0, 0); ctx.globalAlpha = 1; }
+}
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), s = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = W * s + 'px'; cv.style.height = H * s + 'px';
+  cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr); K = cv.width / W; buildPaper();
+}
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
