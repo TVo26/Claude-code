@@ -25,6 +25,7 @@ The owner is not a developer and makes YouTube videos. Explain in plain words an
 | `samples/pixel-stickman.html` | Pixel stick-figure comic | skeleton `stick()` + `POSE` table, `bubble()`, `sfx()` |
 | `samples/oregon-trail.html` | 60 s pixel story (man, ox, wagon) | `man()` with poses, `ox()`, `wagon()`, `caravan()`, parchment trail map, `tiltBlit()` for slopes |
 | `samples/ink-brush-haiku.html` | Ink / sumi-e brush | `brush()` stroke, `blob()`, `wash()`, paper texture |
+| `samples/hendersonville-costs.html` | 15 s pixel cost breakdown (home, housing, budget, pros/cons) | `house()`, `ridges()` mountain layers, 9×9 `ICON`s, `$ ¢ ^ %` glyphs, stacked bar |
 | `samples/style-reel.html` | 25 styles × 4 s | one quick version of each style (`s01`–`s25`) |
 
 The pixel font `G` and `LAND` are copied into several files; when building a new file, splice them in from `samples/pixel-map-voyage.html`.

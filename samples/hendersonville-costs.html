@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hendersonville Costs</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b14;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="15 second pixel-art cost breakdown for buying a home in Hendersonville, North Carolina: home value, monthly housing costs, budget gap, positives and negatives."></canvas>
+<script>
+'use strict';
+/* Hendersonville, NC: cost of buying a home (15 s loop, pixel art).
+   Data as supplied: Zillow (home value, rent), hendersonvillenc (tax rates).
+   Starting savings of $200,000 is derived: $120,000 left + $80,000 needed.
+   Everything is drawn into a 320×180 buffer and scaled up without smoothing.
+   Click / space = pause. ?t=5 opens paused at 5 s. */
+const BW = 320, BH = 180, DUR = 15;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH;
+const b = buf.getContext('2d');
+
+const C = { black:'#000000', navy:'#1d2b53', plum:'#7e2553', green:'#008751', brown:'#ab5236', dgray:'#5f574f',
+  lgray:'#c2c3c7', white:'#fff1e8', red:'#ff004d', orange:'#ffa300', yellow:'#ffec27', lime:'#00e436',
+  blue:'#29adff', lav:'#83769c', pink:'#ff77a8', peach:'#ffccaa', ink:'#0e1430' };
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const R = Math.round;
+
+/* ---------- 5×7 bitmap font (from pixel-map-voyage.html) ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+Object.assign(G, {
+'$':['  #  ',' ####','# #  ',' ### ','  # #','#### ','  #  '], '¢':['  #  ',' ####','# #  ','# #  ','# #  ',' ####','  #  '],
+'^':['  #  ',' ### ','# # #','  #  ','  #  ','  #  ','  #  '], '<':['     ',' #   ','#    ','#####','#    ',' #   ','     '],
+'%':['##   ','##  #','   # ','  #  ',' #   ','#  ##','   ##'],
+});
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x;
+  x0 = R(x0); y = R(y);
+  if (shadow) pxText(s, x0 + sc, y + sc, shadow, sc);
+  b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue;
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+const money = n => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+function rect(x, y, w, h, col){ b.fillStyle = col; b.fillRect(R(x), R(y), R(w), R(h)); }
+function box(x, y, w, h, fill, edge = C.black){ rect(x - 1, y - 1, w + 2, h + 2, edge); rect(x, y, w, h, fill); }
+function sprite(rows, pal, x, y, sc = 1){
+  for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r].length; c++){
+    const k = rows[r][c]; if (k === '.') continue; rect(x + c * sc, y + r * sc, sc, sc, pal[k]); }
+}
+
+/* ---------- backdrop: sky bands + Blue Ridge layers ---------- */
+function sky(cols){
+  const n = cols.length, h = 120 / n;
+  for (let i = 0; i < n; i++){
+    rect(0, i * h, BW, i === n - 1 ? BH : h + 1, cols[i]);
+    if (i < n - 1) { b.fillStyle = cols[i + 1]; for (let x = (i & 1); x < BW; x += 2) b.fillRect(x, R((i + 1) * h) - 1, 1, 1); }
+  }
+}
+function ridges(t, cols, base = 100){
+  for (let L = 0; L < cols.length; L++){
+    b.fillStyle = cols[L];
+    const y0 = base + L * 16, drift = t * (2 + L * 3);
+    for (let x = 0; x < BW; x++){
+      const u = x + drift;
+      const y = y0 - 14 * Math.sin(u * .018 + L * 1.7) - 7 * Math.sin(u * .047 + L * 2.9) - 3 * Math.sin(u * .11 + L);
+      b.fillRect(x, R(y), 1, BH - R(y));
+    }
+  }
+}
+function scene(title, col, t){
+  sky([C.ink, C.navy]); ridges(t, ['#1a2448', '#141c3a', '#0f152e'], 128);
+  rect(0, 0, BW, 22, C.black); rect(0, 22, BW, 1, col);
+  pxText(title, BW / 2, 4, col, 2, 'center', C.navy);
+}
+function source(s){ pxText('SOURCE: ' + s, BW - 4, BH - 10, C.lav, 1, 'right'); }
+
+/* ---------- sprites ---------- */
+function house(x, y){
+  // chimney, roof, walls, windows, door, porch light
+  rect(x + 42, y - 4, 6, 14, C.brown); rect(x + 41, y - 5, 8, 2, C.dgray);
+  for (let r = 0; r < 20; r++) rect(x + 30 - r * 1.6 - 2, y + r, r * 3.2 + 4, 1, r % 4 === 3 ? '#8a2a2a' : C.plum);
+  rect(x - 4, y + 20, 68, 2, C.black);
+  rect(x, y + 22, 60, 30, C.peach); for (let r = 0; r < 30; r += 4) rect(x, y + 22 + r, 60, 1, '#e8b590');
+  box(x + 8, y + 28, 12, 10, C.yellow); rect(x + 13, y + 28, 1, 10, C.brown); rect(x + 8, y + 33, 12, 1, C.brown);
+  box(x + 40, y + 28, 12, 10, C.yellow); rect(x + 45, y + 28, 1, 10, C.brown); rect(x + 40, y + 33, 12, 1, C.brown);
+  box(x + 25, y + 36, 10, 16, C.brown); rect(x + 32, y + 44, 1, 1, C.yellow);
+  rect(x - 10, y + 52, 80, 3, C.green); rect(x + 26, y + 52, 8, 3, C.lgray);
+}
+const ICON = {
+  mtn:  ['....y....', '...yyy...', '....y....', '.........', '...w.....', '..www..w.', '.wwwww.ww', 'gggggggggg'],
+  med:  ['..wwwww..', '.wwrrrww.', '.wwrrrww.', '.rrrrrrr.', '.rrrrrrr.', '.wwrrrww.', '.wwrrrww.', '..wwwww..'],
+  apple:['....b....', '....bg...', '..rr.rr..', '.rrrrrrr.', '.rwrrrrr.', '.rrrrrrr.', '..rrrrr..', '...r.r...'],
+  fall: ['ggg...ggg', 'ggbbbbggg', 'gg.bbb.gg', 'g..bwb..g', 'g..bbb..g', '...bwb...', '..wbbbw..', '.wwwwwww.'],
+  plane:['....w....', '....w....', '...www...', 'wwwwwwwww', '...www...', '....w....', '...www...', '.........'],
+  cash: ['ggggggggg', 'gwwwwwwwg', 'gw..y..wg', 'gw.yyy.wg', 'gw..y..wg', 'gwwwwwwwg', 'ggggggggg', '...r.r...'],
+  rain: ['..wwww...', '.wwwwww..', 'wwwwwwwww', '.........', '.b..b..b.', 'b..b..b..', '.........', 'bbbbbbbbb'],
+};
+const IPAL = { y:C.yellow, w:C.white, g:C.green, r:C.red, b:C.blue };
+
+/* ---------- scenes ---------- */
+function sHome(T){                                  // 0 – 3.5 s
+  sky([C.navy, '#2a3a6a', C.lav, C.pink, C.peach]);
+  rect(250, 60, 14, 14, C.yellow);
+  ridges(T, [C.lav, '#4a4f7a', C.navy], 104);
+  const k = eOut(seg(T, 0, .5));
+  pxText('HENDERSONVILLE, NC', BW / 2, lerp(-20, 6, k), C.white, 2, 'center', C.black);
+  pxText('WHAT IT COSTS TO BUY', BW / 2, lerp(-8, 24, k), C.yellow, 1, 'center', C.black);
+  house(22, lerp(200, 84, eOut(seg(T, .1, .7))));
+  const p = eOut(seg(T, .4, .9)); if (p <= 0) return;
+  const px = lerp(BW, 128, p);
+  box(px, 40, 184, 112, C.ink, C.white);
+  pxText('TYPICAL HOME VALUE', px + 8, 46, C.lgray);
+  pxText(money(416631 * eOut(seg(T, .6, 1.5))), px + 8, 56, C.lime, 2);
+  if (T > 1.4){ pxText('AVG RENT', px + 8, 76, C.lgray); pxText('$1,730/MO', px + 176, 76, C.white, 1, 'right'); }
+  if (T > 1.8){
+    pxText('SAVINGS', px + 8, 92, C.lgray);
+    const s = eOut(seg(T, 2.2, 2.9)), full = 168, left = full * 120 / 200;
+    rect(px + 8, 102, left, 10, C.lime);
+    rect(px + 8 + left, 102, full - left, 10, C.lime);
+    rect(px + 8 + full - (full - left) * s, 102, (full - left) * s, 10, C.red);
+    if (s > .5) pxText('-$80,000', px + 8 + left + 6, 104, C.white);
+    pxText(money(lerp(200000, 120000, s)), px + 176, 92, s < 1 ? C.white : C.lime, 1, 'right');
+    if (s > .3) pxText('BUYING NEEDS ~$80K MORE', px + 8, 118, C.orange);
+    if (s > .3) pxText('THAN THE SALE BRINGS', px + 8, 127, C.orange);
+  }
+  rect(0, BH - 12, BW, 12, C.black); source('ZILLOW');
+}
+
+function sHousing(T){                               // 3.5 – 7 s
+  const t = T - 3.5;
+  scene('HOUSING ' + money(859 * eOut(seg(t, 0, 1.4))) + '/MO', C.yellow, t);
+  const parts = [['TAX', 345, C.red], ['INSURANCE', 167, C.blue], ['UPKEEP', 347, C.orange]];
+  const x0 = 20, W = 280, y = 36; let x = x0;
+  rect(x0 - 1, y - 1, W + 2, 16, C.black);
+  parts.forEach(([name, v, col], i) => {
+    const w = v / 859 * W, g = eOut(seg(t, .15 + i * .4, .55 + i * .4));
+    if (g <= 0) { x += w; return; }
+    rect(x, y, w * g, 14, col); rect(x, y, w * g, 2, 'rgba(255,255,255,.35)');
+    if (g > .6){ pxText(name, x + w / 2, y + 19, col, 1, 'center'); pxText('$' + v, x + w / 2, y + 29, C.white, 1, 'center'); }
+    x += w;
+  });
+  // tax detail
+  const d = eOut(seg(t, 1.5, 1.9)); if (d <= 0) return;
+  const by = lerp(BH, 80, d);
+  box(20, by, 280, 62, C.ink, C.red);
+  pxText('TAX $345/MO = RATE PER $100 OF VALUE', 30, by + 7, C.white);
+  pxText('CITY', 30, by + 22, C.lgray); pxText('52¢', 30, by + 32, C.white, 2);
+  pxText('+', 88, by + 32, C.lgray, 2);
+  pxText('COUNTY', 116, by + 22, C.lgray);
+  const r = eOut(seg(t, 2.1, 2.8)), cty = lerp(43.1, 47.4, r).toFixed(1) + '¢';
+  pxText(cty, 116, by + 32, r > 0 ? C.orange : C.white, 2);
+  if (r > 0){ pxText('^', 186, by + 32 - R(3 * Math.sin(t * 12)), C.orange, 2); pxText('WAS 43.1¢', 206, by + 36, C.lav); }
+  pxText('= 99.4¢', 290, by + 50, C.yellow, 1, 'right');
+  source('HENDERSONVILLENC');
+}
+
+function sBudget(T){                                // 7 – 10.5 s
+  const t = T - 7;
+  scene('BUDGET', C.lime, t);
+  pxText('MONTHLY', 16, 30, C.lgray);
+  const x0 = 72, sc = 150 / 3084;
+  const a = eOut(seg(t, .1, .6)), c = eOut(seg(t, .4, .9));
+  pxText('BUDGET', 16, 42, C.lime); rect(x0, 40, 2471 * sc * a, 10, C.lime);
+  pxText(money(2471 * a), x0 + 2471 * sc * a + 4, 42, C.white);
+  pxText('COSTS', 16, 58, C.red); rect(x0, 56, 3084 * sc * c, 10, C.red);
+  pxText(money(3084 * c), x0 + 3084 * sc * c + 4, 58, C.white);
+  const g = seg(t, 1, 1.3);
+  if (g > 0){
+    const gx = x0 + 2471 * sc, gw = (3084 - 2471) * sc;
+    if (Math.floor(t * 6) % 2 === 0) { b.strokeStyle = C.yellow; b.lineWidth = 1; b.strokeRect(R(gx) + .5, 38.5, R(gw), 29); }
+    pxText('GAP', gx, 72, C.yellow);
+    pxText('-$613/MO', 304, 70, C.yellow, 2, 'right', C.plum);
+  }
+  const y = eOut(seg(t, 1.5, 1.9)); if (y <= 0) return;
+  const by = lerp(BH, 92, y);
+  box(16, by, 288, 60, C.ink, C.lgray);
+  pxText('YEARLY', 26, by + 7, C.lgray);
+  pxText('$29,650', 26, by + 20, C.lime, 2); pxText('-', 118, by + 20, C.white, 2);
+  pxText('$37,007', 140, by + 20, C.red, 2); pxText('=', 234, by + 20, C.white, 2);
+  const s = eOut(seg(t, 2.2, 2.6));
+  if (s > 0) pxText('-$7,357 A YEAR', 160, by + 40 + R((1 - s) * 8), C.yellow, 2, 'center', C.plum);
+}
+
+function rows(t, list, col){
+  list.forEach(([ic, txt], i) => {
+    const k = eOut(seg(t, .25 + i * .22, .55 + i * .22)); if (k <= 0) return;
+    const y = 32 + i * 22, x = lerp(-300, 10, k);
+    box(x, y, 300, 18, C.ink, col);
+    sprite(ICON[ic], IPAL, x + 4, y + 5, 1);
+    pxText(txt, x + 18, y + 6, C.white);
+  });
+}
+function sGood(T){                                  // 10.5 – 13.2 s
+  const t = T - 10.5;
+  scene('THE GOOD', C.lime, t);
+  rows(t, [
+    ['mtn',   'COOL 4-SEASON MOUNTAIN CLIMATE, ~2,100 FT'],
+    ['med',   'ADVENTHEALTH + UNC PARDEE; MISSION 25 MI'],
+    ['apple', 'MAIN STREET + NC APPLE FESTIVAL, LABOR DAY'],
+    ['fall',  'DUPONT FALLS + BLUE RIDGE PARKWAY NEARBY'],
+    ['plane', 'ASHEVILLE 30 MIN, AVL AIRPORT ~15 MIN'],
+  ], C.lime);
+}
+function sBad(T){                                   // 13.2 – 15 s
+  const t = T - 13.2;
+  sky(['#0a0a18', C.ink, '#1a1f3a']);
+  ridges(t, ['#232845', '#1a1e38', '#12162c'], 118);
+  // rain + rising water (deterministic from t)
+  b.fillStyle = 'rgba(41,173,255,.55)';
+  for (let i = 0; i < 90; i++){
+    const x = (i * 53 + R(t * 60)) % BW, y = ((i * 97) % 200 + t * 260) % 200 - 20;
+    b.fillRect(x, R(y), 1, 5);
+  }
+  const wl = BH - 6 - 18 * eOut(seg(t, 0, 1.6));
+  for (let x = 0; x < BW; x++) rect(x, wl + R(1.5 * Math.sin(x * .2 + t * 8)), 1, BH, 'rgba(41,173,255,.45)');
+  if (Math.floor(t * 20) % 17 === 0 && t < 1.2) rect(0, 0, BW, BH, 'rgba(255,241,232,.25)');   // lightning
+  rect(0, 0, BW, 22, C.black); rect(0, 22, BW, 1, C.red);
+  pxText('THE BAD', BW / 2, 4, C.red, 2, 'center', C.plum);
+  rows(t + .1, [
+    ['cash', 'BUYING HERE BREAKS A MEDIAN BUDGET'],
+    ['rain', 'HELENE (2024): FLOOD + LANDSLIDE RISK'],
+  ], C.red);
+  const e = seg(t, 1.45, 1.8); if (e > 0) rect(0, 0, BW, BH, `rgba(0,0,0,${e})`);
+}
+
+/* ---------- transitions: pixel column wipe at each cut ---------- */
+const CUTS = [3.5, 7, 10.5, 13.2];
+function wipe(T){
+  for (const c of CUTS){ const d = T - c; if (d < 0 || d > .25) continue;
+    const p = 1 - d / .25; b.fillStyle = C.black;
+    for (let x = 0; x < BW; x += 8) b.fillRect(x, 0, R(8 * p), BH); }
+}
+
+function render(T){
+  b.imageSmoothingEnabled = false; rect(0, 0, BW, BH, C.black);
+  if (T < 3.5) sHome(T); else if (T < 7) sHousing(T); else if (T < 10.5) sBudget(T); else if (T < 13.2) sGood(T); else sBad(T);
+  wipe(T);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.14)';
+  for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+}
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px';
+  cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr);
+}
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
