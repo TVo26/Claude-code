@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>City Costs Template</title>
+<style>
+  html,body{margin:0;height:100%;background:#2a2a2a;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second whiteboard animation: a hand draws the costs of buying a home in a chosen town, then its positives and negatives."></canvas>
+<script>
+'use strict';
+/* City cost-of-buying video TEMPLATE, whiteboard style (20 s loop, with sound via tools/).
+   Same look, timing and sound hooks as hendersonville-whiteboard.html, but every number
+   and line of text comes from the DATA block below, and the layout adapts to it.
+   "Savings (est.)" before buying is derived: savingsAfter + extraToBuy.
+   1280×720 logical canvas. Click / space = pause. ?t=5 opens paused at 5 s.
+   window.STROKES lists every stroke with its start/end time (used to build the sound track). */
+/* ======================================================================
+   FILL-IN DATA — change only this block to make a video for a new place.
+   Money in whole dollars, tax rates in cents per $100 of home value.
+   Leave a line out (or set it to null) to skip it on screen.
+   Icons for pros/cons: mountain, hospital, apple, waterfall, plane, money,
+   storm, house, sun, tree, car, school, water, fire, star.
+   ====================================================================== */
+const DATA = {
+  place:        'Hendersonville, NC',
+  homeValue:    416631,           // typical home value
+  rent:         1730,             // average rent per month
+  extraToBuy:   80000,            // how much more buying needs than the sale brings
+  savingsAfter: 120000,           // savings left after buying (before = this + extraToBuy)
+  homeSource:   'Zillow',
+
+  housing: [                       // monthly housing costs (the total is added up for you)
+    ['Tax',       345, 'red'],
+    ['Insurance', 167, 'blue'],
+    ['Upkeep',    347, 'orange'],
+  ],
+  taxRate: { city: 52, countyOld: 43.1, countyNew: 47.4 },   // cents per $100; set countyOld = countyNew if unchanged
+  taxSource:    'hendersonvillenc',
+
+  budget: { monthlyIn: 2471, monthlyOut: 3084, yearlyIn: 29650, yearlyOut: 37007 },
+
+  good: [
+    ['mountain',  'Cool four-season mountain climate (~2,100 ft)'],
+    ['hospital',  'AdventHealth + UNC Pardee in town; Mission 25 mi'],
+    ['apple',     'Classic Main Street + NC Apple Festival (Labor Day)'],
+    ['waterfall', 'DuPont waterfalls + Blue Ridge Parkway; Asheville 30 min'],
+    ['plane',     'Asheville Regional Airport ~15 min away'],
+  ],
+  bad: [
+    ['money',     'Buying here breaks a median budget'],
+    ['storm',     'Hurricane Helene (2024) exposed flood + landslide risk'],
+  ],
+  badDoodle: 'mountains',          // picture under the cons: mountains, city, coast, plains, or null
+};
+/* ====================================================================== */
+
+const W = 1280, H = 720, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const TAU = Math.PI * 2;
+const hash = (a, c = 0) => { const s = Math.sin(a * 127.1 + c * 311.7) * 43758.5453; return s - Math.floor(s); };
+const FONT = '"Segoe Print","Bradley Hand","Marker Felt","Comic Sans MS","Liberation Sans",Arial,sans-serif';
+const INK = '#1d1d22', RED = '#d62f2f', GREEN = '#1f9a4a', BLUE = '#2466c4', ORANGE = '#e8871e', GRAY = '#8a8a90';
+
+/* ---------- path builders (wobble is fixed per stroke, not per frame) ---------- */
+let sd = 1;
+const J = a => (hash(sd++, 7.3) * 2 - 1) * a;
+function line(pts, step = 18, amp = 1.4){
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++){
+    const [a, c] = pts[i], [z, e] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(z - a, e - c) / step));
+    for (let j = 0; j < n; j++){ const u = j / n; out.push([lerp(a, z, u) + J(amp), lerp(c, e, u) + J(amp)]); }
+  }
+  out.push(pts[pts.length - 1]); return out;
+}
+const L = (x1, y1, x2, y2) => line([[x1, y1], [x2, y2]]);
+const box = (x, y, w, h) => line([[x + 4, y], [x + w, y + 1], [x + w - 1, y + h], [x, y + h - 1], [x + 1, y - 3]]);
+function ell(cx, cy, rx, ry, a0 = -2.2, turns = 1.08){
+  const o = [], n = 44; for (let i = 0; i <= n; i++){ const a = a0 + i / n * TAU * turns, k = 1 + .04 * i / n; o.push([cx + Math.cos(a) * rx * k + J(1), cy + Math.sin(a) * ry * k + J(1)]); } return o;
+}
+function hatch(x, y, w, h, gap = 11){ const o = []; let up = true; for (let px = x; px <= x + w; px += gap){ o.push([px + J(1.5), up ? y + h - 2 : y + 2]); up = !up; } return o; }
+function wave(x, y, w, amp, n){ const o = []; for (let i = 0; i <= n * 8; i++){ const u = i / (n * 8); o.push([x + u * w, y + Math.sin(u * n * TAU) * amp]); } return o; }
+
+/* ---------- timeline ---------- */
+const TL = []; let cur = 0;
+const at = t => { cur = t; };
+function add(o, dur, gap = .04){ o.t0 = cur; o.t1 = cur + dur; cur = o.t1 + gap; TL.push(o); return o; }
+const P = (pts, col = INK, w = 5, dur = .2, extra = {}) => add({ pts, col, w, ...extra }, dur);
+const T = (txt, x, y, size, col = INK, dur = .4, extra = {}) => add({ txt, x, y, size, col, bold: true, ...extra }, dur);
+// squeeze a scene's strokes so they finish by z (keeps a short hold before each cut)
+function fit(a, z){ const its = TL.filter(o => o.t0 >= a), e = Math.max(...its.map(o => o.t1)); if (e <= z) return;
+  const k = (z - a) / (e - a); for (const o of its){ o.t0 = a + (o.t0 - a) * k; o.t1 = a + (o.t1 - a) * k; } }
+const doodle = (list, col, w, dur) => { const each = dur / list.length; list.forEach(p => P(p, col, w, each, { gap: 0 })); };
+
+/* ---------- helpers for data-driven layout ---------- */
+const COL = { red: RED, blue: BLUE, orange: ORANGE, green: GREEN, ink: INK, gray: GRAY };
+const $ = n => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
+const cents = n => (Math.round(n * 10) / 10) + '¢';
+function tw(txt, size){ ctx.font = `bold ${size}px ${FONT}`; return ctx.measureText(txt).width; }
+const fitSize = (txt, size, maxW) => Math.min(size, Math.floor(size * maxW / tw(txt, size)));
+// split a long line in two at the space nearest the middle
+function wrap2(txt){ const m = txt.length / 2; let best = -1;
+  for (let i = 0; i < txt.length; i++) if (txt[i] === ' ' && (best < 0 || Math.abs(i - m) < Math.abs(best - m))) best = i;
+  return best < 0 ? [txt] : [txt.slice(0, best), txt.slice(best + 1)]; }
+const ICONS = {
+  mountain:  (x, y) => [line([[x - 26, y + 22], [x - 4, y - 14], [x + 10, y + 6], [x + 20, y - 6], [x + 32, y + 22]]), ell(x + 24, y - 20, 9, 9, 0, 1)],
+  hospital:  (x, y) => [box(x - 24, y - 24, 50, 48), line([[x + 1, y - 14], [x + 1, y + 14]]), line([[x - 13, y], [x + 15, y]])],
+  apple:     (x, y) => [ell(x, y + 4, 22, 20, -1.2, 1), line([[x, y - 14], [x + 4, y - 28]]), line([[x + 4, y - 22], [x + 18, y - 28], [x + 6, y - 18]])],
+  waterfall: (x, y) => [line([[x - 28, y - 22], [x - 4, y - 22], [x - 4, y + 22]]), line([[x + 2, y - 18], [x + 6, y + 22]]), line([[x + 12, y - 18], [x + 16, y + 22]]), wave(x - 10, y + 24, 44, 3, 2)],
+  plane:     (x, y) => [line([[x - 28, y + 4], [x + 28, y - 4]]), line([[x - 4, y - 24], [x + 6, y], [x - 8, y + 22]]), line([[x - 24, y - 10], [x - 20, y + 4]])],
+  money:     (x, y) => [ell(x, y, 26, 26, -1.6, 1), line([[x, y - 16], [x, y + 16]]), line([[x + 12, y - 12], [x - 10, y - 6], [x + 10, y + 6], [x - 12, y + 12]]), line([[x - 24, y - 26], [x + 28, y + 28]])],
+  storm:     (x, y) => [line([[x - 30, y + 2], [x - 26, y - 20], [x - 6, y - 28], [x + 10, y - 46], [x + 34, y - 36], [x + 38, y - 16], [x + 30, y + 2], [x - 30, y + 2]]), L(x - 18, y + 14, x - 24, y + 30), L(x + 2, y + 14, x - 4, y + 30), L(x + 22, y + 14, x + 16, y + 30), wave(x - 36, y + 44, 80, 5, 2)],
+  house:     (x, y) => [line([[x - 26, y], [x, y - 24], [x + 26, y]]), box(x - 20, y, 40, 24), box(x - 5, y + 8, 10, 16)],
+  sun:       (x, y) => [ell(x, y, 12, 12, 0, 1), ...[0, 1, 2, 3, 4, 5, 6, 7].map(k => { const a = k * TAU / 8; return L(x + Math.cos(a) * 18, y + Math.sin(a) * 18, x + Math.cos(a) * 28, y + Math.sin(a) * 28); })],
+  tree:      (x, y) => [line([[x, y - 28], [x - 22, y + 8], [x + 22, y + 8], [x, y - 28]]), L(x, y + 8, x, y + 26)],
+  car:       (x, y) => [line([[x - 30, y + 10], [x - 30, y - 4], [x - 16, y - 6], [x - 8, y - 20], [x + 14, y - 20], [x + 22, y - 6], [x + 30, y - 4], [x + 30, y + 10], [x - 30, y + 10]]), ell(x - 16, y + 12, 7, 7, 0, 1), ell(x + 16, y + 12, 7, 7, 0, 1)],
+  school:    (x, y) => [line([[x - 30, y - 8], [x, y - 22], [x + 30, y - 8], [x, y + 6], [x - 30, y - 8]]), line([[x - 18, y], [x - 18, y + 16], [x + 18, y + 16], [x + 18, y]]), L(x + 30, y - 8, x + 30, y + 14)],
+  water:     (x, y) => [wave(x - 30, y - 10, 60, 5, 2), wave(x - 30, y + 4, 60, 5, 2), wave(x - 30, y + 18, 60, 5, 2)],
+  fire:      (x, y) => [line([[x - 16, y + 24], [x - 22, y], [x - 10, y - 12], [x - 6, y + 2], [x, y - 28], [x + 12, y - 6], [x + 18, y - 14], [x + 22, y + 6], [x + 16, y + 24], [x - 16, y + 24]])],
+  star:      (x, y) => [line([0, 1, 2, 3, 4, 5].map(k => { const a = -Math.PI / 2 + k * TAU * 2 / 5; return [x + Math.cos(a) * 26, y + Math.sin(a) * 26]; }))],
+};
+const icon = (k, x, y) => (ICONS[k] || ICONS.star)(x, y);
+const DOODLES = {
+  mountains: () => [[line([[560, 640], [700, 520], [760, 560], [880, 470], [1000, 560], [1060, 530], [1220, 640]], 22, 2),
+    line([[880, 480], [900, 540], [890, 600], [930, 640]], 12, 3), line([[905, 500], [930, 560], [960, 640]], 12, 3)], true],
+  city: () => [[line([[560, 640], [560, 540], [620, 540], [620, 480], [680, 480], [680, 560], [740, 560], [740, 440], [810, 440], [810, 520], [880, 520], [880, 500], [950, 500], [950, 580], [1010, 580], [1010, 470], [1080, 470], [1080, 640]], 22, 1.5)], true],
+  coast: () => [[line([[560, 600], [640, 560], [720, 580], [800, 540]], 22, 2), line([[980, 470], [980, 600]], 22, 1.5), line([[980, 470], [950, 500], [980, 480], [1010, 500], [980, 470]], 12, 2)], true],
+  plains: () => [[line([[540, 620], [1220, 610]], 22, 2), line([[900, 610], [900, 520], [860, 520], [900, 480], [940, 520], [900, 520]], 12, 2)], false],
+};
+
+/* scene 1 · the home */
+const CUT = [4.5, 9, 13, 16.9], PAN = .5, D = DATA;
+at(.1);
+T(D.place, 70, 92, fitSize(D.place, 66, 1100), INK, .6);
+P(wave(72, 118, Math.min(900, tw(D.place, fitSize(D.place, 66, 1100))), 4, 3), BLUE, 5, .15);
+doodle([
+  line([[120, 300], [250, 205], [380, 300]]), box(140, 300, 220, 190), line([[320, 262], [320, 215], [348, 215], [348, 282]]),
+  box(228, 400, 44, 90), box(162, 330, 50, 44), box(290, 330, 50, 44), L(100, 492, 400, 492),
+], INK, 5, .7);
+T('Typical home value', 470, 200, 30, GRAY, .3);
+const hv = $(D.homeValue); T(hv, 470, 276, 76, INK, .45, { ding: 1 });
+P(ell(470 + tw(hv, 76) / 2, 262, tw(hv, 76) / 2 + 30, 58), RED, 4, .25);
+if (D.rent) T(`Avg rent  ${$(D.rent)} / mo`, 470, 370, 36, INK, .35);
+if (D.savingsAfter != null && D.extraToBuy){
+  const before = D.savingsAfter + D.extraToBuy, bw = 600, split = 470 + bw * clamp(D.savingsAfter / before);
+  T(`Savings (est.)  ${$(before)}`, 470, 440, 30, GRAY, .25);
+  P(box(470, 460, bw, 50), INK, 4, .2);
+  P(hatch(474, 462, bw - 8, 46), GREEN, 5, .3);
+  P(L(split, 454, split, 516), RED, 5, .08);
+  P(hatch(split + 2, 462, 470 + bw - 4 - split - 2, 46, 8), RED, 6, .2);
+  T(`${$(D.savingsAfter)} left`, 470, 560, 40, GREEN, .3, { ding: 1 });
+  T(`-${$(D.extraToBuy)} to buy`, Math.max(split, 470 + tw(`${$(D.savingsAfter)} left`, 40) + 30), 560, 30, RED, .25, { womp: 1 });
+}
+if (D.homeSource) T('Source: ' + D.homeSource, 30, 700, 20, GRAY, .12);
+fit(.1, CUT[0] - .3);
+
+/* scene 2 · housing */
+at(CUT[0] + PAN);
+const total = D.housing.reduce((s, h) => s + h[1], 0);
+T(`Housing: ${$(total)} / month`, 70, 92, 62, INK, .55, { ding: 1 });
+{ const x0 = 100, Wd = 1080, k = Wd / total;
+  P(box(x0, 150, Wd, 90), INK, 4, .2); let x = x0;
+  D.housing.forEach(([name, v, c], i) => { const w = v * k, col = COL[c] || [RED, BLUE, ORANGE, GREEN][i % 4];
+    if (x > x0) P(L(x, 146, x, 244), INK, 4, .05);
+    P(hatch(x + 4, 153, w - 8, 84), col, 6, .22);
+    const lab = `${name} ${$(v)}`, ly = 290 + (i % 2 && w < 220 ? 38 : 0);
+    T(lab, x + w / 2, ly, fitSize(lab, 34, Math.max(160, w + 40)), col, .25, { align: 'center' });
+    x += w; }); }
+const tr = D.taxRate;
+if (tr){
+  const raised = tr.countyOld != null && tr.countyOld !== tr.countyNew, sum = tr.city + tr.countyNew;
+  T('Tax rate, per $100 of home value:', 100, 400, 30, GRAY, .3);
+  T(`City ${cents(tr.city)}`, 100, 480, 50, INK, .3);
+  let x = 100 + tw(`City ${cents(tr.city)}`, 50) + 30;
+  T('+', x, 480, 50, INK, .08); x += 60;
+  if (raised){
+    const old = `County ${cents(tr.countyOld)}`, ow = tw(old, 50), nw = tw('County ', 50);
+    T(old, x, 480, 50, INK, .35);
+    P(L(x + nw - 4, 467, x + ow + 6, 463), RED, 5, .1); x += ow + 16;
+    P(line([[x, 490], [x + 40, 450], [x + 25, 452], [x + 40, 450], [x + 38, 466]]), RED, 5, .12);
+    T(cents(tr.countyNew), x + 60, 480, 56, RED, .25, { womp: 1 });
+    T('raised', x + 65, 520, 26, RED, .12);
+  } else T(`County ${cents(tr.countyNew)}`, x, 480, 50, INK, .35);
+  const taxRow = D.housing.find(h => /tax/i.test(h[0]));
+  T(`= ${cents(sum)}` + (taxRow ? `  ≈  ${$(taxRow[1])} / mo` : ''), 100, 600, 44, INK, .4);
+}
+if (D.taxSource) T('Source: ' + D.taxSource, 30, 700, 20, GRAY, .12);
+fit(CUT[0] + PAN, CUT[1] - .3);
+
+/* scene 3 · budget */
+at(CUT[1] + PAN);
+const B = D.budget, mGap = B.monthlyIn - B.monthlyOut, yGap = B.yearlyIn - B.yearlyOut;
+T('Monthly budget', 70, 92, 62, INK, .45);
+{ const x0 = 280, k = 680 / Math.max(B.monthlyIn, B.monthlyOut), bw = B.monthlyIn * k, cw = B.monthlyOut * k;
+  T('Budget', 100, 208, 38, GREEN, .2);
+  P(box(x0, 172, bw, 52), INK, 4, .12); P(hatch(x0 + 4, 175, bw - 8, 46), GREEN, 5, .25);
+  T($(B.monthlyIn), x0 + bw + 16, 210, 38, GREEN, .2);
+  T('Costs', 100, 298, 38, RED, .2);
+  P(box(x0, 262, cw, 52), INK, 4, .12); P(hatch(x0 + 4, 265, cw - 8, 46), RED, 5, .28);
+  T($(B.monthlyOut), x0 + cw + 16, 300, 38, RED, .2);
+  const a = Math.min(bw, cw), z = Math.max(bw, cw), gcol = mGap < 0 ? RED : GREEN;
+  P(line([[x0 + a, 160], [x0 + a, 330]], 10, .8), INK, 3, .1);
+  P(line([[x0 + a, 336], [x0 + a, 350], [x0 + z, 350], [x0 + z, 336]]), gcol, 5, .15);
+  T(`${mGap < 0 ? '' : '+'}${$(mGap)} / mo`, clamp(x0 + (a + z) / 2, 260, 1020), 400, 50, gcol, .3, { align: 'center', [mGap < 0 ? 'womp' : 'ding']: 1 }); }
+T('Every year:', 100, 480, 34, GRAY, .2);
+const eq = `${$(B.yearlyIn)} - ${$(B.yearlyOut)} =`, yg = `${yGap < 0 ? '' : '+'}${$(yGap)}`, ex = 100 + tw(eq, 52) + 50, ycol = yGap < 0 ? RED : GREEN;
+T(eq, 100, 560, 52, INK, .5);
+T(yg, ex, 562, 72, ycol, .3, { [yGap < 0 ? 'womp' : 'ding']: 1 });
+P(ell(ex + tw(yg, 72) / 2, 545, tw(yg, 72) / 2 + 30, 56), ycol, 4, .22);
+fit(CUT[1] + PAN, CUT[2] - .3);
+
+/* scene 4 · the good (one line each; long lines shrink to fit) */
+at(CUT[2] + PAN);
+T('The good', 70, 92, 62, GREEN, .3);
+P(line([[360, 70], [378, 92], [412, 46]]), GREEN, 7, .1);
+{ const n = D.good.length, gap = Math.min(104, 520 / Math.max(1, n));
+  D.good.forEach(([ic, txt], i) => { const y = 190 + i * gap; doodle(icon(ic, 118, y - 12), GREEN, 4, .18); T(txt, 180, y, fitSize(txt, 36, 1060), INK, .45); }); }
+fit(CUT[2] + PAN, CUT[3] - .3);
+
+/* scene 5 · the bad (long lines wrap onto two, second line in red) */
+at(CUT[3] + PAN);
+T('The bad', 70, 92, 62, RED, .28);
+P(L(330, 50, 370, 90), RED, 7, .06); P(L(370, 50, 330, 90), RED, 7, .06);
+{ let y = 220; const pic = D.badDoodle && DOODLES[D.badDoodle];
+  D.bad.forEach(([ic, txt], i) => {
+    const lines = tw(txt, 44) > 1040 ? wrap2(txt) : [txt];
+    doodle(icon(ic, 122, y - 14), i ? BLUE : RED, 4, .22);
+    lines.forEach((s, j) => T(s, 180, y + j * 60, fitSize(s, 44, 1040), j ? RED : INK, .45, i === 0 && j === 0 ? { womp: 1 } : {}));
+    if (lines.length > 1) P(wave(180, y + 82, Math.min(900, tw(lines[1], 44)), 5, 5), RED, 4, .15);
+    y += lines.length * 60 + 70; });
+  if (pic && y <= 560){ const [paths, water] = pic(); doodle(paths, INK, 5, .3);
+    if (water){ P(wave(520, 660, 720, 6, 7), BLUE, 5, .15); P(wave(540, 684, 680, 5, 6), BLUE, 4, .12); } } }
+fit(CUT[3] + PAN, DUR - .6);
+
+const END = Math.max(...TL.map(o => o.t1));
+
+/* ---------- drawing ---------- */
+function strokePath(pts, col, w){ if (pts.length < 2) return; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke(); }
+function partial(pts, p){ if (p <= 0) return []; const n = pts.length - 1, f = p * n, k = Math.floor(f), out = pts.slice(0, k + 1);
+  if (k < n){ const a = pts[k], z = pts[k + 1], u = f - k; out.push([lerp(a[0], z[0], u), lerp(a[1], z[1], u)]); } return out; }
+function hand(x, y){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(.55);
+  ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.beginPath(); ctx.ellipse(90, 50, 70, 34, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(16, -6); ctx.lineTo(16, 6); ctx.fill();
+  ctx.fillStyle = '#2d2d2d'; ctx.fillRect(16, -10, 110, 20); ctx.fillStyle = '#2b6cb0'; ctx.fillRect(96, -10, 30, 20);
+  ctx.fillStyle = '#f2c29b'; ctx.strokeStyle = '#c98f67'; ctx.lineWidth = 2;
+  for (const [ex, ey, rx, ry] of [[70, 26, 40, 30], [40, 12, 16, 11], [44, -14, 16, 10], [74, -16, 22, 12], [120, 40, 50, 36]]){ ctx.beginPath(); ctx.ellipse(ex, ey, rx, ry, 0, 0, TAU); ctx.fill(); ctx.stroke(); }
+  ctx.restore();
+}
+const sceneOf = t => CUT.filter(c => t >= c).length;
+function drawScene(i, t, dx){
+  const a = i ? CUT[i - 1] : 0, z = i < CUT.length ? CUT[i] : 99;
+  ctx.save(); ctx.translate(dx, 0); let tip = null;
+  for (const it of TL){ if (it.t0 < a || it.t0 >= z) continue;
+    const p = seg(t, it.t0, it.t1); if (p <= 0) continue;
+    if (it.pts){ const pp = partial(it.pts, p); strokePath(pp, it.col, it.w); if (p < 1) tip = pp[pp.length - 1]; }
+    else { ctx.font = `bold ${it.size}px ${FONT}`; const w = ctx.measureText(it.txt).width;
+      const x = it.align === 'center' ? it.x - w / 2 : it.align === 'right' ? it.x - w : it.x;
+      ctx.save(); ctx.beginPath(); ctx.rect(x - 6, it.y - it.size * 1.2, (w + 12) * p, it.size * 1.6); ctx.clip();
+      ctx.fillStyle = it.col; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText(it.txt, x, it.y); ctx.restore();
+      if (p < 1) tip = [x + w * p, it.y - it.size * .3 + Math.sin(t * 38) * it.size * .25]; }
+  }
+  ctx.restore(); return tip ? [tip[0] + dx, tip[1]] : null;
+}
+let lastTip = [1150, 640];
+function render(t){
+  ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  ctx.fillStyle = '#fbfbf7'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,.03)'; for (let i = 0; i < 8; i++) ctx.fillRect(hash(i, 1) * W, hash(i, 2) * H, 200 + hash(i, 3) * 300, 2);
+  const s = sceneOf(t), c = CUT[s - 1], pan = s > 0 ? seg(t, c, c + PAN) : 1;
+  let tip;
+  if (pan < 1){ const e = eIO(pan); drawScene(s - 1, t, -W * e); drawScene(s, t, W * (1 - e)); tip = [lerp(1150, 1220, e), lerp(640, 700, e)]; }
+  else tip = drawScene(s, t, 0);
+  // hand rests bottom-right when idle; glides to the next stroke
+  if (!tip){ const nx = TL.find(it => it.t0 > t); tip = nx && nx.t0 - t < .12 && pan >= 1 ? [lerp(1150, nx.pts ? nx.pts[0][0] : nx.x, 1 - (nx.t0 - t) / .12), lerp(640, nx.pts ? nx.pts[0][1] : nx.y, 1 - (nx.t0 - t) / .12)] : [1150, 640]; }
+  if (t < END + .3) hand(tip[0], tip[1]);
+  ctx.strokeStyle = '#c9ccd1'; ctx.lineWidth = 14; ctx.strokeRect(7, 7, W - 14, H - 14);
+  const f = seg(t, DUR - .35, DUR); if (f > 0){ ctx.fillStyle = `rgba(251,251,247,${f})`; ctx.fillRect(0, 0, W, H); }
+}
+window.STROKES = TL.map(({ t0, t1, pts, ding, womp }) => ({ t0, t1, text: !pts, ding: !!ding, womp: !!womp }));
+window.CUTS = CUT; window.DUR = DUR; window.END = END;
+
+function resize(){
+  const q = new URLSearchParams(location.search);
+  if (q.get('export')){ cv.width = 1920; cv.height = 1080; cv.style.width = '1920px'; cv.style.height = '1080px'; return; }
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = W * k + 'px'; cv.style.height = H * k + 'px'; cv.width = Math.round(W * k * dpr); cv.height = Math.round(H * k * dpr);
+}
+let t = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) t = (t + dt) % DUR; render(t); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(t); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ t = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = x => { t = x; playing = false; render(t); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
