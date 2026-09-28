@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hendersonville Whiteboard</title>
+<style>
+  html,body{margin:0;height:100%;background:#2a2a2a;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="20 second whiteboard animation: a hand draws the costs of buying a home in Hendersonville, North Carolina, then its positives and negatives."></canvas>
+<script>
+'use strict';
+/* Hendersonville, NC: cost of buying a home, whiteboard style (20 s loop).
+   Data as supplied: Zillow (home value, rent), hendersonvillenc (tax rates).
+   "Savings (est.) $200,000" is derived: $120,000 left + $80,000 needed.
+   1280×720 logical canvas. Click / space = pause. ?t=5 opens paused at 5 s.
+   window.STROKES lists every stroke with its start/end time (used to build the sound track). */
+const W = 1280, H = 720, DUR = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const TAU = Math.PI * 2;
+const hash = (a, c = 0) => { const s = Math.sin(a * 127.1 + c * 311.7) * 43758.5453; return s - Math.floor(s); };
+const FONT = '"Segoe Print","Bradley Hand","Marker Felt","Comic Sans MS","Liberation Sans",Arial,sans-serif';
+const INK = '#1d1d22', RED = '#d62f2f', GREEN = '#1f9a4a', BLUE = '#2466c4', ORANGE = '#e8871e', GRAY = '#8a8a90';
+
+/* ---------- path builders (wobble is fixed per stroke, not per frame) ---------- */
+let sd = 1;
+const J = a => (hash(sd++, 7.3) * 2 - 1) * a;
+function line(pts, step = 18, amp = 1.4){
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++){
+    const [a, c] = pts[i], [z, e] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(z - a, e - c) / step));
+    for (let j = 0; j < n; j++){ const u = j / n; out.push([lerp(a, z, u) + J(amp), lerp(c, e, u) + J(amp)]); }
+  }
+  out.push(pts[pts.length - 1]); return out;
+}
+const L = (x1, y1, x2, y2) => line([[x1, y1], [x2, y2]]);
+const box = (x, y, w, h) => line([[x + 4, y], [x + w, y + 1], [x + w - 1, y + h], [x, y + h - 1], [x + 1, y - 3]]);
+function ell(cx, cy, rx, ry, a0 = -2.2, turns = 1.08){
+  const o = [], n = 44; for (let i = 0; i <= n; i++){ const a = a0 + i / n * TAU * turns, k = 1 + .04 * i / n; o.push([cx + Math.cos(a) * rx * k + J(1), cy + Math.sin(a) * ry * k + J(1)]); } return o;
+}
+function hatch(x, y, w, h, gap = 11){ const o = []; let up = true; for (let px = x; px <= x + w; px += gap){ o.push([px + J(1.5), up ? y + h - 2 : y + 2]); up = !up; } return o; }
+function wave(x, y, w, amp, n){ const o = []; for (let i = 0; i <= n * 8; i++){ const u = i / (n * 8); o.push([x + u * w, y + Math.sin(u * n * TAU) * amp]); } return o; }
+
+/* ---------- timeline ---------- */
+const TL = []; let cur = 0;
+const at = t => { cur = t; };
+function add(o, dur, gap = .04){ o.t0 = cur; o.t1 = cur + dur; cur = o.t1 + gap; TL.push(o); return o; }
+const P = (pts, col = INK, w = 5, dur = .2, extra = {}) => add({ pts, col, w, ...extra }, dur);
+const T = (txt, x, y, size, col = INK, dur = .4, extra = {}) => add({ txt, x, y, size, col, bold: true, ...extra }, dur);
+// squeeze a scene's strokes so they finish by z (keeps a short hold before each cut)
+function fit(a, z){ const its = TL.filter(o => o.t0 >= a), e = Math.max(...its.map(o => o.t1)); if (e <= z) return;
+  const k = (z - a) / (e - a); for (const o of its){ o.t0 = a + (o.t0 - a) * k; o.t1 = a + (o.t1 - a) * k; } }
+const doodle = (list, col, w, dur) => { const each = dur / list.length; list.forEach(p => P(p, col, w, each, { gap: 0 })); };
+
+/* scene 1 · the home (0 – 4.5 s) */
+const CUT = [4.5, 9, 13, 16.9], PAN = .5;
+at(.1);
+T('Hendersonville, NC', 70, 92, 66, INK, .6);
+P(wave(72, 118, 560, 4, 3), BLUE, 5, .15);
+doodle([
+  line([[120, 300], [250, 205], [380, 300]]), box(140, 300, 220, 190), line([[320, 262], [320, 215], [348, 215], [348, 282]]),
+  box(228, 400, 44, 90), box(162, 330, 50, 44), box(290, 330, 50, 44), L(100, 492, 400, 492),
+], INK, 5, .7);
+T('Typical home value', 470, 200, 30, GRAY, .3);
+T('$416,631', 470, 276, 76, INK, .45, { ding: 1 });
+P(ell(628, 262, 190, 58), RED, 4, .25);
+T('Avg rent  $1,730 / mo', 470, 370, 36, INK, .35);
+T('Savings (est.)  $200,000', 470, 440, 30, GRAY, .25);
+P(box(470, 460, 600, 50), INK, 4, .2);
+P(hatch(474, 462, 592, 46), GREEN, 5, .3);
+P(L(830, 454, 830, 516), RED, 5, .08);
+P(hatch(832, 462, 234, 46, 8), RED, 6, .2);
+T('$120,000 left', 470, 560, 40, GREEN, .3, { ding: 1 });
+T('-$80,000 to buy', 830, 560, 30, RED, .25, { womp: 1 });
+T('Source: Zillow', 30, 700, 20, GRAY, .12);
+
+fit(.1, CUT[0] - .3);
+/* scene 2 · housing (5 – 9 s) */
+at(CUT[0] + PAN);
+T('Housing: $859 / month', 70, 92, 62, INK, .55, { ding: 1 });
+{ const x0 = 100, Wd = 1080, k = Wd / 859, parts = [['Tax', 345, RED], ['Insurance', 167, BLUE], ['Upkeep', 347, ORANGE]];
+  P(box(x0, 150, Wd, 90), INK, 4, .2); let x = x0;
+  for (const [name, v, col] of parts){ const w = v * k;
+    if (x > x0) P(L(x, 146, x, 244), INK, 4, .05);
+    P(hatch(x + 4, 153, w - 8, 84), col, 6, .22);
+    T(`${name} $${v}`, x + w / 2, 290, 34, col, .25, { align: 'center' });
+    x += w; } }
+T('Tax rate, per $100 of home value:', 100, 380, 30, GRAY, .3);
+T('City 52¢', 100, 460, 50, INK, .3);
+T('+', 330, 460, 50, INK, .08);
+T('County 43.1¢', 390, 460, 50, INK, .35);
+P(L(560, 447, 710, 443), RED, 5, .1);
+P(line([[720, 470], [760, 430], [745, 432], [760, 430], [758, 446]]), RED, 5, .12);
+T('47.4¢', 780, 460, 56, RED, .25, { womp: 1 });
+T('raised', 785, 500, 26, RED, .12);
+T('= 99.4¢  ≈  $345 / mo', 100, 590, 44, INK, .4);
+T('Source: hendersonvillenc', 30, 700, 20, GRAY, .12);
+
+fit(CUT[0] + PAN, CUT[1] - .3);
+/* scene 3 · budget (9.5 – 13 s) */
+at(CUT[1] + PAN);
+T('Monthly budget', 70, 92, 62, INK, .45);
+{ const x0 = 280, k = 680 / 3084, bw = 2471 * k, cw = 3084 * k;
+  T('Budget', 100, 208, 38, GREEN, .2);
+  P(box(x0, 172, bw, 52), INK, 4, .12); P(hatch(x0 + 4, 175, bw - 8, 46), GREEN, 5, .25);
+  T('$2,471', x0 + bw + 16, 210, 38, GREEN, .2);
+  T('Costs', 100, 298, 38, RED, .2);
+  P(box(x0, 262, cw, 52), INK, 4, .12); P(hatch(x0 + 4, 265, cw - 8, 46), RED, 5, .28);
+  T('$3,084', x0 + cw + 16, 300, 38, RED, .2);
+  P(line([[x0 + bw, 160], [x0 + bw, 330]], 10, .8), INK, 3, .1);
+  P(line([[x0 + bw, 336], [x0 + bw, 350], [x0 + cw, 350], [x0 + cw, 336]]), RED, 5, .15);
+  T('-$613 / mo', x0 + (bw + cw) / 2, 400, 50, RED, .3, { align: 'center', womp: 1 }); }
+T('Every year:', 100, 480, 34, GRAY, .2);
+T('$29,650 - $37,007 =', 100, 560, 52, INK, .5);
+T('-$7,357', 690, 562, 72, RED, .3, { womp: 1 });
+P(ell(818, 545, 160, 56), RED, 4, .22);
+
+fit(CUT[1] + PAN, CUT[2] - .3);
+/* scene 4 · the good (13.5 – 17.2 s) */
+at(CUT[2] + PAN);
+T('The good', 70, 92, 62, GREEN, .3);
+P(line([[360, 70], [378, 92], [412, 46]]), GREEN, 7, .1);
+{ const rows = [
+    ['Cool four-season mountain climate (~2,100 ft)', (x, y) => [line([[x - 26, y + 22], [x - 4, y - 14], [x + 10, y + 6], [x + 20, y - 6], [x + 32, y + 22]]), ell(x + 24, y - 20, 9, 9, 0, 1)]],
+    ['AdventHealth + UNC Pardee in town; Mission 25 mi', (x, y) => [box(x - 24, y - 24, 50, 48), line([[x + 1, y - 14], [x + 1, y + 14]]), line([[x - 13, y], [x + 15, y]])]],
+    ['Classic Main Street + NC Apple Festival (Labor Day)', (x, y) => [ell(x, y + 4, 22, 20, -1.2, 1), line([[x, y - 14], [x + 4, y - 28]]), line([[x + 4, y - 22], [x + 18, y - 28], [x + 6, y - 18]])]],
+    ['DuPont waterfalls + Blue Ridge Parkway; Asheville 30 min', (x, y) => [line([[x - 28, y - 22], [x - 4, y - 22], [x - 4, y + 22]]), wave(x + 2, y - 16, 0, 0, 1).concat(line([[x + 2, y - 18], [x + 6, y + 22]])), line([[x + 12, y - 18], [x + 16, y + 22]]), wave(x - 10, y + 24, 44, 3, 2)]],
+    ['Asheville Regional Airport ~15 min away', (x, y) => [line([[x - 28, y + 4], [x + 28, y - 4]]), line([[x - 4, y - 24], [x + 6, y], [x - 8, y + 22]]), line([[x - 24, y - 10], [x - 20, y + 4]])]],
+  ];
+  rows.forEach(([txt, icon], i) => { const y = 190 + i * 104; doodle(icon(118, y - 12), GREEN, 4, .18); T(txt, 180, y, 36, INK, .45); }); }
+
+fit(CUT[2] + PAN, CUT[3] - .3);
+/* scene 5 · the bad (17.7 – 20 s) */
+at(CUT[3] + PAN);
+T('The bad', 70, 92, 62, RED, .28);
+P(L(330, 50, 370, 90), RED, 7, .06); P(L(370, 50, 330, 90), RED, 7, .06);
+doodle([ell(122, 206, 26, 26, -1.6, 1), line([[122, 190], [122, 222]]), line([[134, 194], [112, 200], [132, 212], [110, 218]]), line([[98, 180], [150, 234]])], RED, 4, .2);
+T('Buying here breaks a median budget', 180, 220, 44, INK, .55, { womp: 1 });
+doodle([line([[92, 360], [96, 338], [116, 330], [132, 312], [156, 322], [160, 342], [152, 360], [92, 360]]), L(104, 372, 98, 388), L(124, 372, 118, 388), L(144, 372, 138, 388), wave(86, 404, 80, 5, 2)], BLUE, 4, .25);
+T('Hurricane Helene (2024) exposed', 180, 350, 44, INK, .45);
+T('flood + landslide risk', 180, 410, 44, RED, .35);
+P(wave(180, 432, 470, 5, 5), RED, 4, .15);
+doodle([line([[560, 640], [700, 520], [760, 560], [880, 470], [1000, 560], [1060, 530], [1220, 640]], 22, 2),
+  line([[880, 480], [900, 540], [890, 600], [930, 640]], 12, 3), line([[905, 500], [930, 560], [960, 640]], 12, 3)], INK, 5, .3);
+P(wave(520, 660, 720, 6, 7), BLUE, 5, .15); P(wave(540, 684, 680, 5, 6), BLUE, 4, .12);
+fit(CUT[3] + PAN, DUR - .6);
+const END = Math.max(...TL.map(o => o.t1));
+
+/* ---------- drawing ---------- */
+function strokePath(pts, col, w){ if (pts.length < 2) return; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke(); }
+function partial(pts, p){ if (p <= 0) return []; const n = pts.length - 1, f = p * n, k = Math.floor(f), out = pts.slice(0, k + 1);
+  if (k < n){ const a = pts[k], z = pts[k + 1], u = f - k; out.push([lerp(a[0], z[0], u), lerp(a[1], z[1], u)]); } return out; }
+function hand(x, y){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(.55);
+  ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.beginPath(); ctx.ellipse(90, 50, 70, 34, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(16, -6); ctx.lineTo(16, 6); ctx.fill();
+  ctx.fillStyle = '#2d2d2d'; ctx.fillRect(16, -10, 110, 20); ctx.fillStyle = '#2b6cb0'; ctx.fillRect(96, -10, 30, 20);
+  ctx.fillStyle = '#f2c29b'; ctx.strokeStyle = '#c98f67'; ctx.lineWidth = 2;
+  for (const [ex, ey, rx, ry] of [[70, 26, 40, 30], [40, 12, 16, 11], [44, -14, 16, 10], [74, -16, 22, 12], [120, 40, 50, 36]]){ ctx.beginPath(); ctx.ellipse(ex, ey, rx, ry, 0, 0, TAU); ctx.fill(); ctx.stroke(); }
+  ctx.restore();
+}
+const sceneOf = t => CUT.filter(c => t >= c).length;
+function drawScene(i, t, dx){
+  const a = i ? CUT[i - 1] : 0, z = i < CUT.length ? CUT[i] : 99;
+  ctx.save(); ctx.translate(dx, 0); let tip = null;
+  for (const it of TL){ if (it.t0 < a || it.t0 >= z) continue;
+    const p = seg(t, it.t0, it.t1); if (p <= 0) continue;
+    if (it.pts){ const pp = partial(it.pts, p); strokePath(pp, it.col, it.w); if (p < 1) tip = pp[pp.length - 1]; }
+    else { ctx.font = `bold ${it.size}px ${FONT}`; const w = ctx.measureText(it.txt).width;
+      const x = it.align === 'center' ? it.x - w / 2 : it.align === 'right' ? it.x - w : it.x;
+      ctx.save(); ctx.beginPath(); ctx.rect(x - 6, it.y - it.size * 1.2, (w + 12) * p, it.size * 1.6); ctx.clip();
+      ctx.fillStyle = it.col; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText(it.txt, x, it.y); ctx.restore();
+      if (p < 1) tip = [x + w * p, it.y - it.size * .3 + Math.sin(t * 38) * it.size * .25]; }
+  }
+  ctx.restore(); return tip ? [tip[0] + dx, tip[1]] : null;
+}
+let lastTip = [1150, 640];
+function render(t){
+  ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  ctx.fillStyle = '#fbfbf7'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,.03)'; for (let i = 0; i < 8; i++) ctx.fillRect(hash(i, 1) * W, hash(i, 2) * H, 200 + hash(i, 3) * 300, 2);
+  const s = sceneOf(t), c = CUT[s - 1], pan = s > 0 ? seg(t, c, c + PAN) : 1;
+  let tip;
+  if (pan < 1){ const e = eIO(pan); drawScene(s - 1, t, -W * e); drawScene(s, t, W * (1 - e)); tip = [lerp(1150, 1220, e), lerp(640, 700, e)]; }
+  else tip = drawScene(s, t, 0);
+  // hand rests bottom-right when idle; glides to the next stroke
+  if (!tip){ const nx = TL.find(it => it.t0 > t); tip = nx && nx.t0 - t < .12 && pan >= 1 ? [lerp(1150, nx.pts ? nx.pts[0][0] : nx.x, 1 - (nx.t0 - t) / .12), lerp(640, nx.pts ? nx.pts[0][1] : nx.y, 1 - (nx.t0 - t) / .12)] : [1150, 640]; }
+  if (t < END + .3) hand(tip[0], tip[1]);
+  ctx.strokeStyle = '#c9ccd1'; ctx.lineWidth = 14; ctx.strokeRect(7, 7, W - 14, H - 14);
+  const f = seg(t, DUR - .35, DUR); if (f > 0){ ctx.fillStyle = `rgba(251,251,247,${f})`; ctx.fillRect(0, 0, W, H); }
+}
+window.STROKES = TL.map(({ t0, t1, pts, ding, womp }) => ({ t0, t1, text: !pts, ding: !!ding, womp: !!womp }));
+window.CUTS = CUT; window.DUR = DUR; window.END = END;
+
+function resize(){
+  const q = new URLSearchParams(location.search);
+  if (q.get('export')){ cv.width = 1920; cv.height = 1080; cv.style.width = '1920px'; cv.style.height = '1080px'; return; }
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = W * k + 'px'; cv.style.height = H * k + 'px'; cv.width = Math.round(W * k * dpr); cv.height = Math.round(H * k * dpr);
+}
+let t = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) t = (t + dt) % DUR; render(t); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(t); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ t = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = x => { t = x; playing = false; render(t); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
