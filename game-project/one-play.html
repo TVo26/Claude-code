@@ -18,6 +18,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--body)}
 .wrap{max-width:980px;margin:0 auto;padding:18px 16px 60px;display:flex;flex-direction:column;gap:22px}
 h1{font:700 44px/1 var(--display);margin:0;letter-spacing:.02em;text-transform:uppercase}
@@ -208,9 +209,9 @@ const MOD={
 
 /* formations, keyed by class so every team can use them */
 const OFFPRE={
- standard:{Berserker:[86,70],Tank:[86,110],Commander:[64,90],Bruiser:[50,90],Rogue:[84,30]},
+ standard:{Berserker:[86,70],Tank:[86,110],Commander:[64,90],Bruiser:[68,106],Rogue:[84,30]},
  spread:{Berserker:[86,76],Tank:[86,104],Commander:[64,90],Bruiser:[84,154],Rogue:[84,26]},
- heavy:{Berserker:[86,72],Tank:[86,108],Bruiser:[86,90],Commander:[60,90],Rogue:[60,114]}};
+ heavy:{Berserker:[86,72],Tank:[86,108],Bruiser:[86,90],Commander:[60,90],Rogue:[68,112]}};
 const DEFPRE={
  base:{Berserker:[94,70],Tank:[94,110],Commander:[118,90],Bruiser:[150,90],Rogue:[96,30]},
  box:{Berserker:[94,76],Tank:[94,104],Commander:[110,90],Bruiser:[118,66],Rogue:[96,34]},
@@ -234,7 +235,7 @@ function mk(team,i,p,pos,role){
  return{team,i,p,role,x:pos[0],y:pos[1],x0:pos[0],y0:pos[1],vx:0,vy:0,eng:null,stun:0,cd:0,tgt:null,blk:null,cov:null,rd:0,hd:0,aff:AFF[p.cls].includes(role),hist:[]};
 }
 const rt=(e,w)=>{let s=0,t=0;for(const k in w){s+=e.p[k]*w[k];t+=w[k];}return s/t+(e.aff?1:0);};
-const spd=e=>(3.2+.55*e.p.SPD)*4;
+const spd=e=>(4+.55*e.p.SPD)*4;
 const dst=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 function moveTo(e,tx,ty,s){
  const dx=tx-e.x,dy=ty-e.y,d=Math.hypot(dx,dy);
@@ -305,16 +306,16 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
  const thr=isPass?oc.thr-(qb.p.IQ-5)*.04:0;
  const qbEsc=qb.p.AGI*.6+qb.p.IQ*.4;
  /* run: hole noise */
- const holeNoise=[];for(let k=0;k<13;k++)holeNoise.push(tri((11-qb.p.IQ)*.9));
+ const holeIQ=(rb||qb).p.IQ,holeNoise=[];for(let k=0;k<13;k++)holeNoise.push(tri((11-holeIQ)*.5));
  let holeY=90,holeT=-1;
  /* state */
- let ball={x:qb.x+2,y:qb.y-4,h:0,mode:'qb'},carrier=null,end=null,endT=0,thrown=false,handed=false,hurried=false,lastBreak='';
+ let ball={x:qb.x+2,y:qb.y-4,h:0,mode:'qb'},carrier=null,end=null,endT=0,thrown=false,handed=false,hurried=false,hurryT=0;
  const down=new Set();
  const stat={blocks:0};
 
  function engage(b,d){
   const bs=rt(b,oc.line)+half,ds=rt(d,dc.line)+dc.lineBoost*(d.role==='Rusher'?1:.6);
-  const hold=clamp(1+.3*(bs-ds)+tri(.4),.3,4.5);
+  const hold=clamp(.7+.3*(bs-ds)+tri(.5),.3,4.5);
   const g={b,d,t0:t,hold,bs,ds,cx:(b.x+d.x)/2,cy:(b.y+d.y)/2};
   b.eng=d.eng=g;engs.push(g);
  }
@@ -323,11 +324,14 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
   end={type,x,tag:tag||''};endT=t;
  }
  function pickHole(c){
-  let best=c.y,bs=-1e9;
+  let best=c.y,bs=-1e9,lo=150,hi=30;
+  for(const d of B){if(d.role==='Corner'||d.x0>LOS+36)continue;lo=Math.min(lo,d.y0);hi=Math.max(hi,d.y0);}
+  lo=clamp(lo-8,30,90);hi=clamp(hi+8,90,150);
   for(let y=30,k=0;y<=150;y+=10,k++){
+   if(y<lo||y>hi)continue;
    let md=30;
    for(const d of B){const dd=Math.hypot(d.x-(LOS+4),d.y-y)*(d.eng?1.4:1);if(dd<md)md=dd;}
-   const sc=md-(ok==='gap'?.08*Math.abs(y-90)+.05*Math.abs(y-c.y):.035*Math.abs(y-c.y))+holeNoise[k];
+   const sc=md-(ok==='gap'?.1*Math.abs(y-90)+.08*Math.abs(y-c.y):.05*Math.abs(y-c.y))+holeNoise[k];
    if(sc>bs){bs=sc;best=y;}
   }
   return best;
@@ -339,18 +343,18 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
    if(py<22||py>158)continue;
    let md=40;
    for(const d of B){const k=Math.hypot(d.x-px,d.y-py)*(d.eng?1.5:1);if(k<md)md=k;}
-   const sc=md-straight*Math.abs(a)/10;
+   const sc=md+8*Math.cos(r)-straight*Math.abs(a)/10;
    if(sc>bs){bs=sc;best=r;}
   }
   c.hd+=(best-c.hd)*.35;
-  const turn=Math.abs(Math.sin(c.hd)),s=spd(c)*(1-.3*turn*(1-c.p.AGI/12))*(c.stun>0?.4:1);
+  const turn=Math.abs(Math.sin(c.hd)),s=spd(c)*.8*(1-.3*turn*(1-c.p.AGI/12))*(c.stun>0?.4:1);
   c.vx=Math.cos(c.hd)*s;c.vy=Math.sin(c.hd)*s;
   c.x+=c.vx*DT;c.y=clamp(c.y+c.vy*DT,20,160);
  }
  const evadeOf=c=>(c===rb?rt(c,oc.carry||{POW:1,AGI:1}):c===qb?rt(c,{SPD:1,AGI:2,POW:1}):rt(c,oc.rec?oc.rec.w:{AGI:1,POW:1}))+half;
  function pursue(d){
-  const lead=Math.min(.4,dst(d,carrier)/spd(d));
-  moveTo(d,carrier.x+carrier.vx*lead,carrier.y+carrier.vy*lead,spd(d));
+  const lead=Math.min(.5,dst(d,carrier)/spd(d));
+  moveTo(d,carrier.x+carrier.vx*lead,carrier.y+carrier.vy*lead,spd(d)*1.12);
  }
  function doThrow(){
   thrown=true;
@@ -364,7 +368,7 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
   const bspd=90+9*qb.p.ARM;
   let T=dst(qb,best)/bspd,px=best.x+best.vx*T,py=best.y+best.vy*T;
   T=Math.hypot(px-qb.x,py-qb.y)/bspd;px=best.x+best.vx*T;py=best.y+best.vy*T;
-  const q=rt(qb,oc.qb),err=(11-q)*.9*(hurried?1.7:1),a=rng()*6.283,m=err*(.3+rng());
+  const q=rt(qb,oc.qb),err=(11-q)*1.3*(1+T*bspd/120)*(hurried?1.7:1),a=rng()*6.283,m=err*(.3+rng());
   px=clamp(px+Math.cos(a)*m,4,316);py=clamp(py+Math.sin(a)*m,22,158);
   const len=Math.hypot(px-qb.x,py-qb.y);
   ball={x:qb.x+2,y:qb.y-4,h:0,mode:'air',from:[qb.x+2,qb.y-4],to:[px,py],t0:t,t1:t+T+.05,tgt:best,len};
@@ -383,12 +387,12 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
    return inc(`${qb.p.n}'s throw misses ${r.p.n} by ${(miss/YD).toFixed(1)} yd. Incomplete.`);
   }
   if(dd){
-   const defC=rt(dd,dc.cover)+dc.coverBoost*.6,p=clamp(.66+.06*(recC-defC)-.02*miss-(hurried?.06:0),.1,.95);
+   const defC=rt(dd,dc.cover)+dc.coverBoost*.6,p=clamp(.55+.06*(recC-defC)-.02*miss-(hurried?.06:0),.1,.95);
    if(rng()<p){say(`Contested catch: ${r.p.n} beat ${dd.p.n} (${Math.round(p*100)}% chance).`,'catch');return catchIt();}
    if(rng()<clamp(.3+.04*(defC-recC),.05,.6))return pick(dd);
    return inc(`${dd.p.n} breaks up the pass to ${r.p.n} (catch chance was ${Math.round(p*100)}%).`);
   }
-  const p=clamp(.9+.02*(recC-6)-.015*miss,.5,.98);
+  const p=clamp(.82+.02*(recC-6)-.015*miss,.5,.97);
   if(rng()<p)return catchIt();
   return inc(`${r.p.n} was open but drops it (${Math.round(p*100)}% chance to catch).`);
  }
@@ -398,7 +402,7 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
    if(end)return;
    if(d.eng||d.stun>0||d.cd>0)continue;
    if(dst(d,carrier)>5.5)continue;
-   const tk=rt(d,dc.tackle)+dc.tackleBoost,ev=evadeOf(carrier),p=clamp(.55+.07*(tk-ev),.12,.92);
+   const tk=rt(d,dc.tackle)+dc.tackleBoost,ev=evadeOf(carrier),p=clamp(.45+.07*(tk-ev),.1,.9);
    if(rng()<p){finish(endType(),carrier.x,carrier===qb&&isPass?'scramble':'');down.add(carrier);say(`${d.p.n} makes the tackle (${Math.round(p*100)}% chance).`,'tackle');}
    else{d.stun=.55;d.cd=.8;carrier.stun=.2;say(`${carrier.p.n} breaks ${d.p.n}'s tackle (tackle chance was ${Math.round(p*100)}%).`,'break');}
   }
@@ -448,8 +452,8 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
       }
      }
      if(!end){
-      if(free.length&&!hurried&&t>=.5){hurried=true;say(`${free[0].p.n} is free and closing: ${qb.p.n} is hurried.`,'info');}
-      if(t>=thr||(hurried&&t>=.7))doThrow();
+      if(free.length&&!hurried&&t>=.5){hurried=true;hurryT=t;say(`${free[0].p.n} is free and closing: ${qb.p.n} is hurried.`,'info');}
+      if(t>=thr||(hurried&&t>=Math.max(.7,hurryT+.6-.05*qb.p.IQ)))doThrow();
      }
     }
     for(const r of recv){
@@ -468,8 +472,8 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
      else{carrier=qb;ball.mode='carried';say(`No runner: ${qb.p.n} keeps it.`,'info');}
     }
     if(rb&&rb.x<LOS-1&&!rb.eng){
-     if(t-holeT>=.2){holeY=pickHole(rb);holeT=t;}
-     moveTo(rb,LOS-2,holeY,spd(rb)*.95);
+     if(t-holeT>=.5){holeY=pickHole(rb);holeT=t;}
+     moveTo(rb,LOS+3,holeY,spd(rb)*.85);
     }else if(carrier&&!carrier.eng){
      carrierStep(carrier,oc.straight);
     }
@@ -484,7 +488,7 @@ function simulate(O,D,oPos,dPos,ok,dk,seed){
     }
     if(isPass){
      if(blitzers.includes(d)){
-      if(d.role==='Rusher'||t>=.2)moveTo(d,qb.x,qb.y,spd(d));
+      if(d.role==='Rusher'||t>=.2)moveTo(d,qb.x,qb.y,spd(d)*1.12);
       continue;
      }
      if(t<bite){moveTo(d,LOS+4,d.y0,spd(d)*.7);continue;}
@@ -779,11 +783,11 @@ function placeLabels(F){
  const oN=youOff?MINE:OPP,dN=youOff?OPP:MINE;
  for(let i=0;i<10;i++){
   const off=i<5,k=off?i:i-5,p=off?F.o[k]:F.d[k],mine=off?youOff:!youOff,el=labEls[i];
-  if(playing){el.style.display='none';continue;}
+  if(playing||!mine){el.style.display='none';continue;}
   el.style.display='';
-  el.className='lab '+(mine?'y':'t');
+  el.className='lab y';
   const role=off?oRoles[k]:dRoles[k],pl=off?oN[k]:dN[k],aff=AFF[pl.cls].includes(role);
-  el.innerHTML='<span class="nm">'+pl.n.split(' ')[0]+' · </span>'+CODE[role]+(aff?'★':'');
+  el.innerHTML=(S.drag===k?pl.n.split(' ')[0]+' · ':'')+CODE[role]+(aff?'★':'');
   el.style.left=(p[0]/320*100)+'%';el.style.top=((p[1]-10)/180*100)+'%';
  }
 }
