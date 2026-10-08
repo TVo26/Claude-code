@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How Starlink Works</title>
+<style>
+  html,body{margin:0;height:100%;background:#ece5da;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;border-radius:12px;box-shadow:0 12px 40px rgba(80,60,90,.18);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="A 3 minute hand-drawn animation where Robo, a red square robot, explains how Starlink satellite internet works."></canvas>
+<script>
+'use strict';
+/* =====================================================================
+   How Starlink Works — a 3 minute hand-drawn canvas animation starring Robo.
+   Every frame is drawn from scratch with Canvas 2D; no images, no libs.
+   Controls: click / space = pause · left/right = seek 5 s · R = restart
+             ?t=95 in the URL starts paused at that time (seconds)
+   Sizes and speeds are simplified for teaching and are labelled on screen.
+   ===================================================================== */
+const W = 1280, H = 720, DUR = 180, SCENE = 15, N = 12;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let K = 1;
+
+const P = {
+  paper:'#fbf6ec', ink:'#4a4453', inkSoft:'#8a8294',
+  red:'#f2837b', redD:'#d9665f', pink:'#f9c9d2', pinkL:'#fde8ec',
+  blue:'#a9d6f2', blueL:'#e3f2fc', green:'#a8dca0', greenD:'#6fae73', greenL:'#e3f5df',
+  yellow:'#fbe39a', yellowL:'#fff5d1', purple:'#cdb8ee', purpleL:'#efe6fb',
+  orange:'#fbc79a', orangeL:'#feecdc', mint:'#aee8d6', mintL:'#e2f7f0',
+  gray:'#e2dcd2', grayD:'#b1a9a0'
+};
+const SCOL = ['#f9b8c4','#cdb8ee','#a9d6f2','#a8dca0','#fbe39a','#fbc79a','#d9c2f0','#aee8d6','#c7e59a','#f2837b'];
+const FONT = '"Comic Sans MS","Comic Neue","Chalkboard SE","Marker Felt","Segoe Print",cursive';
+const MONO = '"Courier New",ui-monospace,monospace';
+
+/* ---------- math + seeded jitter (the "boil" of a hand-drawn line) ---------- */
+let seed = 1;
+function R(){ seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+const J = a => (R() * 2 - 1) * a;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const back = t => { if (t <= 0) return 0; const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const TAU = Math.PI * 2;
+
+function withA(a, fn){ if (a <= 0) return; const g = ctx.globalAlpha; ctx.globalAlpha = g * Math.min(1, a); fn(); ctx.globalAlpha = g; }
+
+/* ---------- sketchy primitives ---------- */
+function subdiv(pts, closed, maxL){
+  const out = [], n = pts.length, m = closed ? n : n - 1;
+  for (let i = 0; i < m; i++){
+    const a = pts[i], b = pts[(i + 1) % n]; out.push(a);
+    const k = Math.floor(Math.hypot(b[0] - a[0], b[1] - a[1]) / maxL);
+    for (let j = 1; j <= k; j++){ const u = j / (k + 1); out.push([lerp(a[0], b[0], u), lerp(a[1], b[1], u)]); }
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
+}
+function trace(pts, closed, amp){
+  const q = pts.map(p => [p[0] + J(amp), p[1] + J(amp)]), n = q.length;
+  ctx.beginPath();
+  if (closed){
+    let m = [(q[n-1][0] + q[0][0]) / 2, (q[n-1][1] + q[0][1]) / 2]; ctx.moveTo(m[0], m[1]);
+    for (let i = 0; i < n; i++){ const b = q[(i + 1) % n]; m = [(q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2]; ctx.quadraticCurveTo(q[i][0], q[i][1], m[0], m[1]); }
+    ctx.closePath();
+  } else {
+    ctx.moveTo(q[0][0], q[0][1]);
+    for (let i = 1; i < n - 1; i++){ const b = q[i + 1]; ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2); }
+    ctx.lineTo(q[n-1][0], q[n-1][1]);
+  }
+}
+function bbox(pts){ let a = 1e9, b = 1e9, c = -1e9, d = -1e9; for (const p of pts){ a = Math.min(a, p[0]); b = Math.min(b, p[1]); c = Math.max(c, p[0]); d = Math.max(d, p[1]); } return [a, b, c, d]; }
+function hatch(x0, y0, x1, y1, c, gap = 9){
+  const g = ctx.globalAlpha; ctx.globalAlpha = g * .3; ctx.strokeStyle = c; ctx.lineWidth = 1.3; ctx.beginPath();
+  for (let d = x0 - (y1 - y0); d < x1; d += gap){ ctx.moveTo(d + J(1), y1 + J(1)); ctx.lineTo(d + (y1 - y0) + J(1), y0 + J(1)); }
+  ctx.stroke(); ctx.globalAlpha = g;
+}
+function shape(pts, o = {}){
+  const closed = o.closed !== false, amp = o.amp ?? 1.2, w = o.w ?? 2.2;
+  if (o.fill){ ctx.fillStyle = o.fill; trace(pts, closed, amp * .4); ctx.fill(); }
+  if (o.hatch){ const b = bbox(pts); ctx.save(); trace(pts, closed, 0); ctx.clip(); hatch(b[0], b[1], b[2], b[3], o.hatch, o.gap || 9); ctx.restore(); }
+  if (o.stroke !== null){
+    ctx.strokeStyle = o.stroke || P.ink; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (o.dash) ctx.setLineDash(o.dash);
+    ctx.lineWidth = w; trace(pts, closed, amp); ctx.stroke();
+    const g = ctx.globalAlpha; ctx.globalAlpha = g * .45; ctx.lineWidth = w * .6; trace(pts, closed, amp * 1.8); ctx.stroke(); ctx.globalAlpha = g;
+    ctx.setLineDash([]);
+  }
+}
+function rrPts(x, y, w, h, r){
+  r = Math.max(2, Math.min(r, w / 2, h / 2)); const pts = [];
+  const cs = [[x + w - r, y + r, -Math.PI / 2], [x + w - r, y + h - r, 0], [x + r, y + h - r, Math.PI / 2], [x + r, y + r, Math.PI]];
+  for (const [cx, cy, a0] of cs) for (let i = 0; i <= 3; i++){ const a = a0 + i / 3 * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  return subdiv(pts, true, 55);
+}
+function ellPts(cx, cy, rx, ry, n){ n = n || Math.max(12, Math.min(32, Math.round((rx + ry) * .35))); const p = []; for (let i = 0; i < n; i++){ const a = i / n * TAU; p.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]); } return p; }
+const rect = (x, y, w, h, o = {}) => shape(rrPts(x, y, w, h, o.r ?? 8), o);
+const circ = (cx, cy, r, o = {}) => shape(ellPts(cx, cy, r, o.ry ?? r), o);
+const poly = (pts, o = {}) => shape(subdiv(pts, false, o.seg || 40), { ...o, closed:false });
+function line(x1, y1, x2, y2, c = P.ink, w = 2.2){
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1, nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+  ctx.strokeStyle = c; ctx.lineCap = 'round'; const g = ctx.globalAlpha;
+  for (let p = 0; p < 2; p++){
+    ctx.lineWidth = p ? w * .55 : w; ctx.globalAlpha = p ? g * .5 : g;
+    const bow = J(1) * Math.min(3, len * .03), ax = x1 + J(1), ay = y1 + J(1), bx = x2 + J(1), by = y2 + J(1);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2 + nx * bow, (ay + by) / 2 + ny * bow, bx, by); ctx.stroke();
+  }
+  ctx.globalAlpha = g;
+}
+function arrow(x1, y1, x2, y2, c = P.ink, w = 2.2, p = 1, dash){
+  if (p <= 0) return; const ex = lerp(x1, x2, p), ey = lerp(y1, y2, p);
+  poly([[x1, y1], [ex, ey]], { stroke:c, w, dash, amp:.8 });
+  const a = Math.atan2(ey - y1, ex - x1), L = 12;
+  line(ex, ey, ex - Math.cos(a - .45) * L, ey - Math.sin(a - .45) * L, c, w);
+  line(ex, ey, ex - Math.cos(a + .45) * L, ey - Math.sin(a + .45) * L, c, w);
+}
+function txt(s, x, y, size = 20, c = P.ink, align = 'center', bold = false, font = FONT){
+  ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; ctx.fillStyle = c; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+function txtW(s, size, bold = false, font = FONT){ ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; return ctx.measureText(s).width; }
+function bubble(x, y, s, tx, ty, size = 18){
+  const w = txtW(s, size, true) + 30, h = size + 20;
+  rect(x - w / 2, y - h / 2, w, h, { fill:'#fff', r:h / 2, w:2 });
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x - 10, y + h / 2 - 4); ctx.lineTo(tx, ty); ctx.lineTo(x + 10, y + h / 2 - 4); ctx.fill();
+  line(x - 10, y + h / 2 - 1, tx, ty, P.ink, 2); line(x + 10, y + h / 2 - 1, tx, ty, P.ink, 2);
+  txt(s, x, y + 1, size, P.ink, 'center', true);
+}
+function star(cx, cy, r1, r2, n, rot, o){ const p = []; for (let i = 0; i < n * 2; i++){ const a = rot + i / (n * 2) * TAU - Math.PI / 2, r = i % 2 ? r2 : r1; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } shape(p, { amp:.6, ...o }); }
+function sparkle(x, y, s, rot = 0){ star(x, y, 12 * s, 3.5 * s, 4, rot, { fill:P.yellow, w:1.6 }); }
+function gear(cx, cy, r, teeth, rot, fill){
+  const p = [], n = teeth * 4;
+  for (let i = 0; i < n; i++){ const a = rot + i / n * TAU, rr = (i % 4 < 2) ? r : r * .78; p.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+  shape(p, { fill, w:2, amp:.5 }); circ(cx, cy, r * .3, { fill:'#fff', w:1.8 });
+}
+function check(x, y, s = 1){ circ(x, y, 11 * s, { fill:P.green, w:1.8 }); poly([[x - 5 * s, y], [x - 1 * s, y + 4 * s], [x + 6 * s, y - 5 * s]], { w:2.6 * s, amp:.3 }); }
+function lock(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(-10, -10); ctx.arc(0, -10, 10, Math.PI, 0); ctx.lineTo(10, 0); ctx.stroke();
+  rect(-17, -3, 34, 27, { fill:P.yellow, r:6 }); circ(0, 8, 3.5, { fill:P.ink, w:1 }); ctx.restore();
+}
+function leaf(x, y, ang, sz){
+  if (sz < .6) return; ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  shape(ellPts(sz * 1.2, 0, sz * 1.2, sz * .55, 10), { fill:P.green, stroke:P.greenD, w:1.5, amp:.35 });
+  ctx.restore();
+}
+
+/* ---------- Robo: the cute red square robot ---------- */
+function robot(x, y, s, o = {}){
+  const t = o.t || 0, aL = o.aL ?? .25, aR = o.aR ?? .25, lk = o.look || [0, 0], mood = o.mood || 'happy';
+  const bob = o.bounce ? -Math.abs(Math.sin(t * o.bounce)) * 9 : Math.sin(t * 3) * 1.5;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(74,68,83,.13)'; ctx.beginPath(); ctx.ellipse(0, 2, 48, 7, 0, 0, TAU); ctx.fill();
+  const sw = o.walk ? Math.sin(t * 14) : 0;
+  rect(-28, -24 - Math.max(0, sw) * 6, 16, 24, { fill:P.redD, r:5, w:2 });
+  rect(12, -24 - Math.max(0, -sw) * 6, 16, 24, { fill:P.redD, r:5, w:2 });
+  ctx.translate(0, bob);
+  // antenna with glowing tip
+  poly([[0, -104], [4, -113], [-4, -121], [0, -129]], { w:2.6, amp:.4, seg:100 });
+  const glow = .5 + .5 * Math.sin(t * 5);
+  ctx.fillStyle = `rgba(255,222,110,${.22 + .3 * glow})`; ctx.beginPath(); ctx.arc(0, -135, 14 + glow * 5, 0, TAU); ctx.fill();
+  circ(0, -135, 7.5, { fill:P.yellow, w:2 });
+  // body
+  rect(-46, -104, 92, 84, { fill:mood === 'x' ? '#d9b3ae' : P.red, r:18, w:2.6 });
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-39, -58); ctx.quadraticCurveTo(-40, -90, -28, -96); ctx.stroke();
+  // face screen
+  rect(-31, -93, 62, 44, { fill:'#fff4ef', r:11, w:2 });
+  const blink = (t % 3.3) < .13;
+  for (const ex of [-13, 13]){
+    const cx = ex + lk[0] * 3, cy = -74 + lk[1] * 2;
+    if (mood === 'x'){ line(cx - 5, cy - 5, cx + 5, cy + 5, P.ink, 2.4); line(cx - 5, cy + 5, cx + 5, cy - 5, P.ink, 2.4); }
+    else if (blink){ line(cx - 5, cy, cx + 5, cy, P.ink, 2.6); }
+    else { ctx.fillStyle = P.ink; ctx.beginPath(); ctx.ellipse(cx, cy, 4.6, mood === 'wow' ? 6.8 : 5.6, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + 1.6, cy - 2.2, 1.7, 0, TAU); ctx.fill(); }
+  }
+  ctx.fillStyle = 'rgba(247,150,165,.7)';
+  ctx.beginPath(); ctx.ellipse(-22, -61, 5.5, 3.2, 0, 0, TAU); ctx.ellipse(22, -61, 5.5, 3.2, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 2.3; ctx.beginPath();
+  const mx = lk[0] * 3;
+  if (mood === 'wow') ctx.ellipse(mx, -59, 3.6, 4.6, 0, 0, TAU);
+  else if (mood === 'sad' || mood === 'x') ctx.arc(mx, -53, 6, Math.PI * 1.15, Math.PI * 1.85);
+  else ctx.arc(mx, -64, 6.5, Math.PI * .15, Math.PI * .85);
+  ctx.stroke();
+  circ(-15, -35, 4.2, { fill:P.yellow, w:1.6 }); circ(0, -35, 4.2, { fill:P.mint, w:1.6 }); circ(15, -35, 4.2, { fill:P.blue, w:1.6 });
+  // noodle arms
+  const L = 34, sL = [-45, -62], sR = [45, -62];
+  const hL = [sL[0] - Math.sin(aL) * L, sL[1] + Math.cos(aL) * L], hR = [sR[0] + Math.sin(aR) * L, sR[1] + Math.cos(aR) * L];
+  for (const [s0, h, d] of [[sL, hL, -1], [sR, hR, 1]]){
+    poly([s0, [(s0[0] + h[0]) / 2 + d * 3, (s0[1] + h[1]) / 2 + 5], h], { w:3.4, amp:.4, seg:100 });
+    circ(h[0], h[1], 7.5, { fill:P.redD, w:2 });
+  }
+  ctx.restore();
+  const k = p => [x + p[0] * s, y + (p[1] + bob) * s];
+  return { hL:k(hL), hR:k(hR) };
+}
+
+/* ---------- frame chrome: paper, stage label, caption, progress ---------- */
+
+/* ---------- chrome: paper, part label, caption, progress ---------- */
+function paper(){
+  ctx.fillStyle = P.paper; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(150,185,215,.15)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let y = 100; y < H; y += 32){ ctx.moveTo(0, y); ctx.lineTo(W, y); } ctx.stroke();
+  const s0 = seed; seed = 4242; ctx.fillStyle = 'rgba(120,100,80,.08)';
+  for (let i = 0; i < 280; i++) ctx.fillRect(R() * W, R() * H, 1 + R() * 1.6, 1 + R() * 1.6);
+  seed = s0;
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * .35, W / 2, H / 2, H * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(130,95,60,.10)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function header(i, title, lt){
+  const p = back(seg(lt, 0, .45));
+  ctx.save(); ctx.translate(48, 50); ctx.scale(p || .001, p || .001);
+  circ(0, 0, 24, { fill:SCOL[i % 10], w:2.4 }); txt(String(i + 1), 0, 1, 24, P.ink, 'center', true);
+  ctx.restore();
+  txt(title, 86, 48, 30, P.ink, 'left', true);
+  const w = txtW(title, 30, true), u = eOut(seg(lt, .15, .8)), pts = [];
+  for (let k = 0; k <= 30; k++) pts.push([86 + w * u * k / 30, 72 + Math.sin(k * 1.4) * 2.2]);
+  if (u > .01) poly(pts, { stroke:SCOL[i % 10], w:4.5, amp:.4, seg:100 });
+  txt(`part ${i + 1} of ${N}`, W - 44, 50, 16, P.inkSoft, 'right');
+}
+function caption(s, c, L){
+  withA(Math.min(seg(c, .1, .4), seg(L - c, 0, .25)), () => {
+    const w = txtW(s, 20) + 44;
+    rect(W / 2 - w / 2, 626, w, 42, { fill:'rgba(255,255,255,.82)', r:21, w:1.8 });
+    txt(s, W / 2, 647, 20, P.ink);
+  });
+}
+function progress(T){
+  const x0 = 44, x1 = W - 170, y = 696, sw = (x1 - x0) / N;
+  for (let k = 0; k < N; k++){
+    const a = x0 + k * sw + 3, b = x0 + (k + 1) * sw - 3, f = clamp((T - k * SCENE) / SCENE);
+    ctx.fillStyle = 'rgba(74,68,83,.1)'; ctx.beginPath(); ctx.roundRect(a, y - 4, b - a, 8, 4); ctx.fill();
+    if (f > 0){ ctx.fillStyle = SCOL[k % 10]; ctx.beginPath(); ctx.roundRect(a, y - 4, Math.max(8, (b - a) * f), 8, 4); ctx.fill(); }
+  }
+  txt(ended ? 'click to replay' : `${T.toFixed(1)}s / ${DUR}s`, W - 44, y, 15, P.inkSoft, 'right');
+  if (!playing && !ended){ ctx.fillStyle = 'rgba(74,68,83,.55)'; ctx.fillRect(W - 60, 16, 6, 20); ctx.fillRect(W - 50, 16, 6, 20); }
+}
+
+/* ---------- Starlink building blocks ---------- */
+let curT = 0;
+const LANDS = [[.5,.5,.2],[2.1,.62,.24],[3.6,.4,.16],[4.9,.7,.22],[5.8,.3,.13],[1.2,.85,.18]];
+const LANDS_CAP = [[-2.5,.93,.07],[-2.05,.95,.08],[-1.6,.94,.07],[-1.15,.95,.08],[-.7,.93,.06],[-2.85,.9,.06]];
+function earth(cx, cy, Rr, cap){
+  ctx.fillStyle = P.blue; ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.clip(); ctx.fillStyle = P.green;
+  for (const [a, r, s] of (cap ? LANDS_CAP : LANDS)){
+    ctx.beginPath(); ctx.ellipse(cx + Math.cos(a) * Rr * r, cy + Math.sin(a) * Rr * r, Rr * s, Rr * s * (cap ? .35 : .6), a + (cap ? Math.PI / 2 : 0), 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.stroke();
+}
+function stars(){
+  const s0 = seed; seed = 1234;
+  for (let i = 0; i < 28; i++){
+    const x = 50 + R() * 1180, y = 110 + R() * 480, tw = .5 + .5 * Math.sin(curT * 2 + i * 1.7);
+    ctx.fillStyle = `rgba(150,160,205,${.35 + .5 * tw})`; ctx.beginPath(); ctx.arc(x, y, 1.6 + tw, 0, TAU); ctx.fill();
+  }
+  seed = s0;
+}
+function space(fn){
+  ctx.save(); ctx.beginPath(); ctx.roundRect(30, 96, 1220, 512, 22); ctx.fillStyle = '#dfe5fa'; ctx.fill(); ctx.clip();
+  stars(); fn(); ctx.restore();
+  ctx.beginPath(); ctx.roundRect(30, 96, 1220, 512, 22); ctx.strokeStyle = P.ink; ctx.lineWidth = 2.4; ctx.stroke();
+}
+function ground(y){
+  ctx.fillStyle = P.greenL; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, y + Math.sin(x * .012) * 7);
+  ctx.lineTo(W, H); ctx.fill();
+  ctx.strokeStyle = P.greenD; ctx.lineWidth = 2.4; ctx.beginPath();
+  for (let x = 0; x <= W; x += 20) x ? ctx.lineTo(x, y + Math.sin(x * .012) * 7) : ctx.moveTo(x, y);
+  ctx.stroke();
+}
+function sat(x, y, s = 1, rot = 0, hi = 0){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  if (hi){ ctx.fillStyle = `rgba(255,222,110,${.4 * hi})`; ctx.beginPath(); ctx.arc(0, 0, 32, 0, TAU); ctx.fill(); }
+  rect(-28, -5, 56, 10, { fill:P.blueL, r:2, w:1.8, amp:.5 });
+  line(-14, -5, -14, 5, P.inkSoft, 1.2); line(0, -5, 0, 5, P.inkSoft, 1.2); line(14, -5, 14, 5, P.inkSoft, 1.2);
+  rect(-7, -9, 14, 18, { fill:P.gray, r:3, w:1.8, amp:.4 });
+  ctx.restore();
+}
+function dish(x, y, s = 1, glow = 0){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rect(-22, -4, 44, 8, { fill:P.gray, r:3, w:1.8 }); line(0, -4, 0, -34, P.inkSoft, 5);
+  rect(-32, -46, 64, 12, { fill:P.pinkL, r:5, w:2.2 });
+  if (glow){ ctx.fillStyle = `rgba(255,222,110,${.5 * glow})`; ctx.beginPath(); ctx.arc(0, -52, 14, 0, TAU); ctx.fill(); }
+  ctx.restore();
+}
+function cabin(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rect(34, -128, 16, 40, { fill:P.gray, r:2, w:2 });
+  rect(-60, -70, 120, 70, { fill:P.orangeL, r:4, w:2.4 });
+  shape([[-72, -66], [0, -122], [72, -66]], { fill:P.red, w:2.4, amp:.8 });
+  rect(-14, -44, 28, 44, { fill:P.yellow, r:3, w:2 }); rect(28, -52, 22, 22, { fill:P.blueL, r:3, w:2 });
+  ctx.restore();
+}
+function tree(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rect(-6, -30, 12, 30, { fill:'#c9a27e', r:3, w:2 }); circ(0, -52, 26, { fill:P.green, stroke:P.greenD, w:2.2 });
+  ctx.restore();
+}
+function cloud(x, y, s = 1, fill = '#fff'){
+  const cs = [[-26, 6, 20], [0, -6, 28], [28, 4, 22], [6, 12, 20]];
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = P.grayD; for (const [a, b, r] of cs){ ctx.beginPath(); ctx.arc(a, b, r + 2.5, 0, TAU); ctx.fill(); }
+  ctx.fillStyle = fill; for (const [a, b, r] of cs){ ctx.beginPath(); ctx.arc(a, b, r, 0, TAU); ctx.fill(); }
+  ctx.restore();
+}
+function wifi(x, y, s, lv, bad){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.lineCap = 'round'; ctx.lineWidth = 6;
+  for (let i = 0; i < 3; i++){ ctx.strokeStyle = i < lv ? P.greenD : P.grayD; ctx.beginPath(); ctx.arc(0, 0, 16 + i * 14, -Math.PI * .8, -Math.PI * .2); ctx.stroke(); }
+  ctx.fillStyle = lv > 0 ? P.greenD : P.grayD; ctx.beginPath(); ctx.arc(0, 0, 5, 0, TAU); ctx.fill();
+  if (bad) line(-34, -46, 34, 6, P.redD, 6);
+  ctx.restore();
+}
+function station(x, y, s = 1, glow = 0){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rect(-44, -44, 88, 44, { fill:P.purpleL, r:5, w:2.4 }); rect(-8, -36, 16, 36, { fill:P.yellow, r:3, w:1.8 });
+  line(0, -44, 0, -82, P.ink, 4); circ(0, -92, 17, { fill:P.pinkL, w:2.2 });
+  if (glow){ ctx.fillStyle = `rgba(255,222,110,${.5 * glow})`; ctx.beginPath(); ctx.arc(0, -92, 24, 0, TAU); ctx.fill(); }
+  ctx.restore();
+}
+function pkt(x, y, c = P.yellow, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rect(-12, -9, 24, 18, { fill:c, r:3, w:1.8, amp:.4 }); poly([[-12, -9], [0, 2], [12, -9]], { w:1.6, amp:.3 });
+  ctx.restore();
+}
+function tag(s, x, y, size = 16, fill = P.yellowL){
+  const w = txtW(s, size, true) + 24;
+  rect(x - w / 2, y - size / 2 - 8, w, size + 16, { fill, r:(size + 16) / 2, w:1.6 }); txt(s, x, y, size, P.ink, 'center', true);
+}
+function pathPos(pts, u){
+  const L = []; let tot = 0;
+  for (let i = 0; i < pts.length - 1; i++){ const d = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); L.push(d); tot += d; }
+  let d = clamp(u) * tot;
+  for (let i = 0; i < L.length; i++){
+    if (d <= L[i] || i === L.length - 1){ const v = L[i] ? Math.min(1, d / L[i]) : 0; return { p:[lerp(pts[i][0], pts[i + 1][0], v), lerp(pts[i][1], pts[i + 1][1], v)], leg:i }; }
+    d -= L[i];
+  }
+}
+function dotted(a, b, c, lt, w = 2.4){
+  ctx.lineDashOffset = -lt * 40; poly([a, b], { stroke:c, w, dash:[7, 9], amp:.6 }); ctx.lineDashOffset = 0;
+}
+function dome(cx, gy, Rr){
+  ctx.fillStyle = '#e8f1fc'; ctx.beginPath(); ctx.arc(cx, gy, Rr, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = P.inkSoft; ctx.setLineDash([6, 8]); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, gy, Rr, Math.PI, 0); ctx.stroke(); ctx.setLineDash([]);
+}
+
+/* =====================================================================
+   SCENES — each is 15 s long and receives local time lt ∈ [0,15]
+   ===================================================================== */
+
+/* 1 · hook */
+function s1(lt){
+  ground(500);
+  const cols = [P.pink, P.blue, P.yellow, P.mint];
+  [[70, 70], [118, 104], [172, 60], [222, 88]].forEach(([x, h], k) => {
+    rect(x - 22, 500 - h, 44, h, { fill:cols[k], r:3, w:2 }); rect(x - 8, 500 - h + 12, 16, 12, { fill:'#fff', r:2, w:1.4, amp:.3 });
+  });
+  txt('town with internet', 150, 548, 17, P.ink);
+  const u = eOut(seg(lt, .5, 3));
+  if (u > 0) poly([[250, 522], [250 + u * 450, 522]], { stroke:P.ink, w:6, amp:.5 });
+  withA(seg(lt, 3, 3.6), () => {
+    poly([[700, 522], [960, 522]], { stroke:P.grayD, w:4, dash:[8, 10] });
+    circ(780, 522, 17, { fill:P.yellowL, w:2 }); txt('?', 780, 523, 22, P.ink, 'center', true);
+    txt('too far to dig', 770, 480, 19, P.redD, 'center', true);
+  });
+  cabin(1040, 500, 1); dish(1160, 500, .9);
+  const conn = lt >= 7.6;
+  wifi(1040, 330, 1, conn ? 3 : 0, !conn);
+  const mood = lt < 5.5 ? 'sad' : lt < 9.5 ? 'wow' : 'happy';
+  robot(900, 505, .75, { t:lt, mood, look:[1, -.3], aR: conn ? 1.9 + Math.sin(lt * 8) * .3 : .25 });
+  withA(seg(lt, 1, 1.5) * (1 - seg(lt, 4.5, 5)), () => bubble(840, 350, 'No signal…', 890, 405, 18));
+  withA(seg(lt, 7.8, 8.3) * (1 - seg(lt, 11.5, 12)), () => bubble(840, 350, 'Connected!', 890, 405, 18));
+  const e = eOut(seg(lt, 4.5, 7.5)), sx = lerp(1380, 880, e), sy = lerp(40, 170, e);
+  sat(sx, sy, 1.4, -.15, conn ? 1 : 0);
+  withA(seg(lt, 7.2, 8), () => dotted([sx, sy + 14], [1160, 452], P.blue, lt, 3));
+  if (conn) sparkle(sx + 50, sy - 30 + Math.sin(lt * 4) * 4, 1, lt);
+  const p = back(seg(lt, 9.5, 10.5));
+  if (p > 0){
+    ctx.save(); ctx.translate(380, 190); ctx.scale(p, p);
+    txt('How does Starlink work?', 0, 0, 46, P.ink, 'center', true);
+    poly([[-270, 28], [-90, 32], [90, 26], [270, 30]], { stroke:P.yellow, w:6, amp:.5, seg:80 });
+    ctx.restore();
+  }
+  withA(seg(lt, 10.5, 11.5), () => txt('internet from space, step by step', 380, 245, 22, P.inkSoft));
+}
+
+/* 2 · the old way */
+function s2(lt){
+  const cx = 640, cy = 1060, Rr = 620, surf = x => cy - Math.sqrt(Rr * Rr - (x - cx) * (x - cx));
+  const u = seg(lt, 2, 13);
+  space(() => {
+    earth(cx, cy, Rr, true);
+    ctx.strokeStyle = P.inkSoft; ctx.setLineDash([6, 8]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, 440); ctx.lineTo(cx, 235); ctx.stroke(); ctx.setLineDash([]);
+    poly([[cx - 9, 350], [cx + 9, 338], [cx - 9, 326], [cx + 9, 314]], { w:2.4, amp:.3 });
+    txt('about 36,000 km', cx + 100, 330, 20, P.ink, 'center', true);
+    tag('not to scale!', cx + 100, 366, 15, P.orangeL);
+    const A = [400, 448], S = [640, 215], G = [880, 448];
+    dish(400, surf(400), .9, u > 0 && u < 1 ? .6 : 0); station(880, surf(880), .8);
+    sat(640, 190, 1.5, 0, u > 0 && u < 1 ? 1 : 0);
+    for (const [a, b] of [[A, S], [S, G]]){ ctx.globalAlpha *= .5; poly([a, b], { stroke:P.inkSoft, w:2, dash:[5, 9], amp:.5 }); ctx.globalAlpha /= .5; }
+    txt('your dish', 400, surf(400) + 36, 16, P.ink, 'center', true); txt('ground station', 880, surf(880) + 36, 16, P.ink, 'center', true);
+    if (u > 0 && u < 1){
+      const r = pathPos([A, S, G, S, A], u), req = r.leg < 2;
+      pkt(r.p[0], r.p[1], req ? P.yellow : P.blue, 1.3);
+      txt(req ? 'request' : 'reply', r.p[0], r.p[1] - 24, 15, P.ink, 'center', true);
+    }
+    robot(290, surf(290), .55, { t:lt, mood: u > .45 ? 'sad' : 'happy', look:[1, -.4] });
+    rect(960, 140, 260, 124, { fill:'#fff', r:14, w:2.2 });
+    txt(u >= 1 ? 'total wait (typical)' : 'waiting…', 1090, 166, 16, P.inkSoft);
+    txt(`${Math.round(600 * u)} ms`, 1090, 214, 46, u > .5 ? P.redD : P.ink, 'center', true);
+    txt('1 ms = 1/1000 of a second', 1090, 248, 13, P.inkSoft);
+    tag('slow motion', 150, 140, 15, P.blueL);
+  });
+}
+
+/* 3 · fly low */
+function s3(lt){
+  const cx = 480, cy = 1000, Rr = 560, RR = 608, surf = x => cy - Math.sqrt(Rr * Rr - (x - cx) * (x - cx));
+  space(() => {
+    earth(cx, cy, Rr, true);
+    ctx.strokeStyle = P.inkSoft; ctx.setLineDash([4, 7]); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, RR, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    const sh = (lt * .02) % .17;
+    for (let j = -6; j <= 6; j++){
+      const a = -Math.PI / 2 + j * .17 + sh, off = Math.abs(a + Math.PI / 2), al = clamp(2 - off * 2.2), hi = off < .085 ? 1 : 0;
+      withA(al, () => sat(cx + RR * Math.cos(a), cy + RR * Math.sin(a), .6, a + Math.PI / 2, hi));
+    }
+    dish(480, surf(480), .7, .7); robot(575, surf(575), .5, { t:lt, mood:'happy', look:[-1, -.5] });
+    arrow(498, 424, 498, 400, P.redD, 2.4); arrow(498, 400, 498, 424, P.redD, 2.4);
+    const a2 = -2.0, p1 = [cx + Rr * Math.cos(a2), cy + Rr * Math.sin(a2)], p2 = [cx + RR * Math.cos(a2), cy + RR * Math.sin(a2)];
+    line(p1[0], p1[1], p2[0], p2[1], P.redD, 3.5); line(p1[0] - 8, p1[1] + 3, p1[0] + 8, p1[1] - 3, P.redD, 3); line(p2[0] - 8, p2[1] + 3, p2[0] + 8, p2[1] - 3, P.redD, 3);
+    txt('550 km', p2[0] - 62, p2[1] - 14, 22, P.redD, 'center', true);
+    txt('Starlink orbit', 330, 270, 20, P.ink, 'center', true);
+    tag('not to scale: the satellites are drawn bigger', 480, 135, 15, P.orangeL);
+  });
+  const k = eOut(seg(lt, 5, 9));
+  rect(900, 118, 320, 480, { fill:'#fff', r:16, w:2.2 });
+  txt('same scale, side by side', 1060, 146, 17, P.inkSoft, 'center', true);
+  ctx.fillStyle = P.grayD; ctx.fillRect(920, 566, 280, 3);
+  rect(965, 560 - 6, 32, 6, { fill:P.green, r:2, w:1.8, amp:.3 });
+  if (k > 0) rect(1115, 560 - 340 * k, 32, 340 * k, { fill:P.pink, r:3, w:2 });
+  txt('Starlink', 981, 582, 16, P.ink, 'center', true); txt('550 km', 981, 540, 16, P.greenD, 'center', true);
+  txt('old satellites', 1131, 582, 16, P.ink, 'center', true);
+  withA(seg(lt, 8.5, 9.2), () => { txt('36,000 km', 1131, 200, 16, P.redD, 'center', true); txt('65× higher', 1030, 360, 24, P.redD, 'center', true); });
+}
+
+/* 4 · the catch: they zoom */
+function s4(lt){
+  const cx = 640, gy = 560, Rd = 430, Rs = 380, pos = s => [cx + Rs * Math.cos(Math.PI * (1 - s)), gy - Rs * Math.sin(Math.PI * (1 - s))];
+  dome(cx, gy, Rd); ground(gy);
+  dish(cx, gy + 4, .9);
+  const u = eIO(seg(lt, 1.5, 9.5)), s = .03 + .94 * u;
+  if (lt > 1.5){
+    for (let k = 0; k < 30; k++){ const q = .03 + .94 * u * (k / 30); if (q < s - .02){ const p = pos(q); ctx.fillStyle = `rgba(160,150,190,${.15 + .5 * k / 30})`; ctx.beginPath(); ctx.arc(p[0], p[1], 3, 0, TAU); ctx.fill(); } }
+  }
+  const sp = lt < 10.2 ? pos(s) : null;
+  if (sp && lt > 1.5){
+    withA(1 - seg(lt, 9.6, 10.2), () => {
+      for (let k = 1; k <= 3; k++) line(sp[0] - 30 * k - 14, sp[1] - 10 * k * 0, sp[0] - 30 * k - 40, sp[1], P.inkSoft, 2);
+      sat(sp[0], sp[1], 1.1, 0, 1);
+    });
+  }
+  const nx = eOut(seg(lt, 12, 15)), np = pos(.03 + nx * .1);
+  if (lt > 12) sat(np[0], np[1], 1.1, 0, 0);
+  const rx = 440, rl = sp && lt > 1.5 ? [sp[0] - rx, sp[1] - 480] : [0, -1], rn = Math.hypot(rl[0], rl[1]) || 1;
+  robot(rx, gy + 8, .65, { t:lt, mood: lt > 10.5 && lt < 12 ? 'wow' : 'happy', look:[rl[0] / rn, rl[1] / rn], aR:.25 });
+  withA(seg(lt, 2, 3) * (1 - seg(lt, 12.5, 13)), () => {
+    txt('≈ 27,000 km/h', 640, 235, 42, P.redD, 'center', true);
+    txt('a passenger jet flies ≈ 900 km/h', 640, 275, 19, P.ink);
+  });
+  if (lt > 1.5 && lt < 10.5){ const sec = Math.round(u * 240); tag(`time since it rose: ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}  (sped up)`, 1000, 150, 16, P.blueL); }
+  withA(seg(lt, 10.4, 11), () => bubble(560, 380, 'gone already!', 520, 450, 19));
+}
+
+/* 5 · thousands of satellites + rocket */
+function s5(lt){
+  const cx = 430, cy = 340, Re = 140, Rr = 210, drawn = [];
+  const pt = (k, a) => { const phi = k * Math.PI / 6, ex = Rr * Math.cos(a), ey = Rr * .3 * Math.sin(a); return [cx + ex * Math.cos(phi) - ey * Math.sin(phi), cy + ex * Math.sin(phi) + ey * Math.cos(phi)]; };
+  const ring = fr => {
+    ctx.strokeStyle = 'rgba(120,115,150,.45)'; ctx.lineWidth = 1.6;
+    for (let k = 0; k < 6; k++){
+      ctx.beginPath(); let pen = false;
+      for (let q = 0; q <= 60; q++){ const a = q / 60 * TAU, ok = (Math.sin(a) >= 0) === fr, p = pt(k, a); if (ok){ pen ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); pen = true; } else pen = false; }
+      ctx.stroke();
+    }
+  };
+  const sats = fr => {
+    for (let k = 0; k < 6; k++) for (let j = 0; j < 11; j++){
+      const a = j / 11 * TAU + lt * .35 + k * .6;
+      if ((Math.sin(a) >= 0) !== fr) continue;
+      const p = pt(k, a); if (fr) drawn.push(p);
+      ctx.fillStyle = P.blue; ctx.strokeStyle = P.ink; ctx.lineWidth = 1.3; ctx.fillRect(p[0] - 6, p[1] - 2.5, 12, 5); ctx.strokeRect(p[0] - 6, p[1] - 2.5, 12, 5);
+    }
+  };
+  space(() => {
+    ring(false); sats(false); earth(cx, cy, Re); ring(true); sats(true);
+    const pin = [cx + 28, cy - 64];
+    withA(seg(lt, 9, 10), () => {
+      let best = null, bd = 1e9; for (const p of drawn){ const d = Math.hypot(p[0] - pin[0], p[1] - pin[1]); if (d < bd){ bd = d; best = p; } }
+      if (best) dotted(pin, best, P.redD, lt, 2.6); circ(pin[0], pin[1], 7, { fill:P.red, w:2 });
+      txt('you', pin[0] - 26, pin[1] + 4, 17, P.ink, 'center', true);
+    });
+    withA(seg(lt, 2.5, 3.5), () => txt('thousands of satellites', cx, 584, 26, P.ink, 'center', true));
+    tag('simplified picture, not to scale', cx, 130, 15, P.orangeL);
+  });
+  rect(850, 118, 380, 470, { fill:P.blueL, r:16, w:2.2 });
+  rect(852, 556, 376, 30, { fill:P.greenL, r:5, w:1.6 });
+  const L = eIO(seg(lt, 5.5, 11.5)), yb = lerp(540, 392, L), rx = 1040;
+  if (lt > 5.5 && lt < 11.5) for (let k = 0; k < 5; k++){ ctx.fillStyle = `rgba(255,255,255,${.8 - k * .12})`; ctx.beginPath(); ctx.arc(rx + (k - 2) * 20, 548 - k * 4, 18 + k * 3 - L * 10, 0, TAU); ctx.fill(); }
+  if (lt > 5.5 && lt < 11.5) shape([[rx - 11, yb], [rx, yb + 34 + Math.sin(lt * 40) * 8], [rx + 11, yb]], { fill:P.orange, stroke:P.redD, w:1.6, amp:.4 });
+  rect(rx - 15, yb - 124, 30, 124, { fill:'#fff', r:5, w:2.4 });
+  shape([[rx - 15, yb - 124], [rx, yb - 162], [rx + 15, yb - 124]], { fill:P.red, w:2.4, amp:.5 });
+  shape([[rx - 15, yb - 20], [rx - 30, yb + 2], [rx - 15, yb]], { fill:P.redD, w:2, amp:.4 }); shape([[rx + 15, yb - 20], [rx + 30, yb + 2], [rx + 15, yb]], { fill:P.redD, w:2, amp:.4 });
+  withA(seg(lt, 4.8, 5.4) * (1 - seg(lt, 8, 8.6)), () => txt('Launch!', rx, 160, 30, P.redD, 'center', true));
+  if (lt > 11.5){
+    const e = eOut(seg(lt, 11.5, 14));
+    for (let i = 0; i < 8; i++) sat(rx + (i - 3.5) * 36 * e, yb - 190 - (lt - 11.5) * 6, .5, 0, 0);
+    withA(seg(lt, 12, 12.8), () => txt('dozens at a time', rx, 150, 22, P.ink, 'center', true));
+  }
+  withA(seg(lt, 6, 6.8), () => txt('a reusable rocket', rx, 590 - 8, 15, P.inkSoft));
+}
+
+/* 6 · the flat dish */
+function s6(lt){
+  rect(70, 190, 330, 230, { fill:P.pinkL, r:18, w:2.6 });
+  for (let i = 0; i < 9; i++) for (let j = 0; j < 6; j++){
+    const ph = Math.sin(lt * 5 - i * .7 * Math.min(1, seg(lt, 5, 7)) - j * .3), a = .25 + .75 * (.5 + .5 * ph);
+    ctx.fillStyle = `rgba(242,131,123,${a})`; ctx.beginPath(); ctx.arc(104 + i * 33.5, 224 + j * 34, 8, 0, TAU); ctx.fill();
+  }
+  txt('the flat dish (front)', 235, 458, 19, P.ink, 'center', true);
+  txt('lots of tiny antennas', 235, 486, 17, P.inkSoft);
+  txt('side view: each antenna fires a tiny bit earlier or later', 850, 128, 19, P.ink, 'center', true);
+  const base = 505, xs = [], v = 200, T = .7, amp = eOut(seg(lt, 4.5, 6.5)), th = .62 * Math.sin((lt - 5) * .9) * amp, sn = Math.sin(th);
+  for (let i = 0; i < 11; i++) xs.push(600 + i * 50);
+  const offs = xs.map(x => -(x - 850) * sn / v), omin = Math.min(...offs);
+  ctx.save(); ctx.beginPath(); ctx.rect(470, 110, 790, base - 110); ctx.clip();
+  xs.forEach((x, i) => {
+    for (let k = 0; k < 4; k++){
+      const r = (((lt - offs[i]) % T + T) % T) * v + k * T * v, al = clamp(1 - r / 540);
+      ctx.strokeStyle = `rgba(80,150,210,${.6 * al})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, base, r, Math.PI, 0); ctx.stroke();
+    }
+  });
+  ctx.restore();
+  rect(570, base, 560, 12, { fill:P.gray, r:4, w:2 });
+  xs.forEach((x, i) => { circ(x, base - 2, 8, { fill:P.red, w:1.8 }); const h = 6 + (offs[i] - omin) * 30; ctx.fillStyle = P.orange; ctx.fillRect(x - 7, base + 18, 14, h); ctx.strokeStyle = P.ink; ctx.lineWidth = 1.4; ctx.strokeRect(x - 7, base + 18, 14, h); });
+  txt('timing offsets', 850, 592, 15, P.inkSoft);
+  ctx.globalAlpha *= .9; arrow(850, base - 10, 850 + 250 * sn, base - 10 - 250 * Math.cos(th), P.redD, 5); ctx.globalAlpha /= .9;
+  withA(seg(lt, 6.5, 7.5), () => txt('beam', 850 + 290 * sn, base - 10 - 290 * Math.cos(th), 22, P.redD, 'center', true));
+  robot(1160, 590, .55, { t:lt, mood: lt > 5 ? 'wow' : 'happy', look:[-1, -.5] });
+}
+
+/* 7 · following a moving target */
+function s7(lt){
+  const cx = 640, gy = 560, Rd = 430, Rs = 380, pos = s => [cx + Rs * Math.cos(Math.PI * (1 - s)), gy - Rs * Math.sin(Math.PI * (1 - s))];
+  dome(cx, gy, Rd); ground(gy);
+  const g = lt / 20 + .12, dp = [cx, gy - 40];
+  dish(cx, gy + 4, .9);
+  let serve = null, since = 99;
+  for (let i = 0; i < 4; i++){
+    const s = (g + i * .25) % 1, al = Math.min(seg(s, .02, .08), 1 - seg(s, .92, .98)), p = pos(s);
+    if (s >= .3 && s < .55){ serve = p; since = (s - .3) * 20; }
+    withA(al, () => {
+      sat(p[0], p[1], 1.1, 0, s >= .3 && s < .55 ? 1 : 0);
+      if (s >= .3 && s < .55) txt('serving you', p[0], p[1] - 30, 16, P.redD, 'center', true);
+      else if (s >= .05 && s < .3) txt('next', p[0], p[1] - 28, 15, P.inkSoft, 'center', true);
+    });
+  }
+  if (serve){
+    dotted(dp, serve, P.redD, lt, 3.4);
+    const r = (lt * .9) % 1, q = [lerp(dp[0], serve[0], r), lerp(dp[1], serve[1], r)]; pkt(q[0], q[1], P.yellow, .8);
+    if (since < .9){
+      withA(1 - since / .9, () => { ctx.strokeStyle = P.redD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(dp[0], dp[1], 20 + since * 90, 0, TAU); ctx.stroke(); txt('handoff!', cx + 120, gy - 110, 26, P.redD, 'center', true); });
+    }
+  }
+  robot(440, gy + 8, .65, { t:lt, mood:'happy', look:[1, -.6] });
+  tag('the beam steers itself: no motors needed', 640, 128, 16, P.blueL);
+}
+
+/* 8 · journey of a click */
+function s8(lt){
+  ground(520);
+  const A = [235, 482], S = [540, 210], G = [880, 438], F = [1130, 525], C = [1130, 335];
+  cabin(120, 520, .8); dish(235, 520, .8, .5); station(880, 520, 1, .5); sat(540, 190, 1.5, 0, 1);
+  for (const [a, b] of [[A, S], [S, G]]){ ctx.globalAlpha *= .55; poly([a, b], { stroke:P.inkSoft, w:2, dash:[5, 9], amp:.5 }); ctx.globalAlpha /= .55; }
+  poly([[925, 524], F, C], { stroke:P.purple, w:7, amp:.6 });
+  cloud(1130, 270, 1.3); rect(1100, 290, 60, 40, { fill:P.blueL, r:5, w:2.2 });
+  for (let k = 0; k < 3; k++){ ctx.fillStyle = (Math.floor(lt * 3) + k) % 3 ? P.greenD : P.yellow; ctx.beginPath(); ctx.arc(1112, 301 + k * 12, 3, 0, TAU); ctx.fill(); }
+  const labels = [[1.5, 'your dish', 235, 565], [4.5, 'satellite', 540, 255], [8, 'ground station', 880, 565], [11, 'website server', 1130, 225]];
+  for (const [t0, s, x, y] of labels) withA(seg(lt, t0, t0 + .6), () => txt(s, x, y, 18, P.ink, 'center', true));
+  withA(seg(lt, 9, 9.6), () => txt('fiber cable', 1030, 548, 16, P.inkSoft));
+  const u = seg(lt, 1.5, 13.5);
+  if (u > 0 && u < 1){
+    const r = pathPos([A, S, G, F, C, F, G, S, A], u), req = u < .5;
+    pkt(r.p[0], r.p[1], req ? P.yellow : P.blue, 1.3);
+    txt(req ? 'request' : 'reply', r.p[0], r.p[1] - 24, 15, P.ink, 'center', true);
+  }
+  robot(60, 530, .55, { t:lt, mood:'happy', look:[1, -.3] });
+  withA(seg(lt, 12.5, 13.3), () => { rect(420, 112, 440, 54, { fill:'#fff', r:14, w:2.2 }); txt('whole round trip: ≈ 25–60 ms (typical)', 640, 140, 22, P.greenD, 'center', true); });
+}
+
+/* 9 · lasers in space */
+function s9(lt){
+  const cx = 640, cy = 1130, Rr = 780, RR = 840, surf = x => cy - Math.sqrt(Rr * Rr - (x - cx) * (x - cx));
+  space(() => {
+    earth(cx, cy, Rr, true);
+    const ps = [];
+    for (let j = 0; j < 7; j++){ const f = (-38 + 12.67 * j) * Math.PI / 180; ps.push([cx + RR * Math.sin(f), cy - RR * Math.cos(f), f]); }
+    const sx = 170, gx = 1110, shipY = surf(sx), gsY = surf(gx);
+    withA(seg(lt, 4, 5), () => { for (let j = 0; j < 6; j++){ const a = ps[j], b = ps[j + 1]; ctx.lineDashOffset = -lt * 50; poly([[a[0], a[1]], [b[0], b[1]]], { stroke:P.red, w:3.4, dash:[10, 7], amp:.4 }); ctx.lineDashOffset = 0; } });
+    ps.forEach(p => sat(p[0], p[1], .8, p[2], 1));
+    ctx.save(); ctx.translate(sx, shipY + 4);
+    shape([[-52, -16], [52, -16], [36, 10], [-36, 10]], { fill:P.red, w:2.4, amp:.6 }); rect(-20, -40, 40, 24, { fill:'#fff', r:4, w:2 });
+    line(0, -40, 0, -62, P.ink, 3); rect(-16, -74, 32, 10, { fill:P.pinkL, r:4, w:2 }); ctx.restore();
+    station(gx, gsY, .85);
+    const A = [sx, shipY - 76], Gp = [gx, gsY - 92];
+    dotted(A, [ps[0][0], ps[0][1]], P.blue, lt, 2.6); dotted([ps[6][0], ps[6][1]], Gp, P.blue, lt, 2.6);
+    const u = seg(lt, 6, 14);
+    if (u > 0 && u < 1){ const r = pathPos([A, ...ps.map(p => [p[0], p[1]]), Gp], u); pkt(r.p[0], r.p[1], P.yellow, 1.2); }
+    withA(seg(lt, 4.3, 5.1), () => { txt('laser links', 640, 250, 28, P.redD, 'center', true); txt('(newer satellites)', 640, 280, 17, P.inkSoft); });
+    withA(seg(lt, 10, 10.8), () => { txt('ocean: no ground station nearby', 250, 150, 17, P.ink, 'center', true); arrow(200, 168, sx, shipY - 90, P.inkSoft, 2); });
+    withA(seg(lt, 11.5, 12.3), () => txt('ground station', gx, 150, 17, P.ink, 'center', true));
+  });
+}
+
+/* 10 · why it feels fast */
+function s10(lt){
+  const rows = [
+    { name:'Old satellite internet', sub:'≈ 36,000 km up', ms:600, col:P.red, lab:'~600 ms', t0:.8 },
+    { name:'Starlink', sub:'≈ 550 km up', ms:40, col:P.green, lab:'~25–60 ms', t0:5.5 },
+    { name:'Home fiber / cable', sub:'for comparison', ms:15, col:P.blue, lab:'~10–20 ms', t0:10 }
+  ];
+  rows.forEach((r, i) => {
+    const y = 175 + i * 130, w = Math.max(10, r.ms * .9) * eOut(seg(lt, r.t0, r.t0 + 1.4));
+    withA(seg(lt, r.t0 - .2, r.t0 + .3), () => {
+      txt(r.name, 40, y + 22, 21, P.ink, 'left', true); txt(r.sub, 40, y + 50, 16, P.inkSoft, 'left');
+    });
+    if (w > 0){ rect(330, y, w, 70, { fill:r.col, r:10, w:2.4 }); }
+    withA(seg(lt, r.t0 + 1.2, r.t0 + 1.8), () => txt(r.lab, 330 + Math.max(10, r.ms * .9) + 16, y + 36, 26, P.ink, 'left', true));
+  });
+  tag('typical numbers: real results vary', 640, 118, 15, P.orangeL);
+  robot(1150, 540, 1, { t:lt, mood: lt > 10 ? 'wow' : lt > 5.5 ? 'happy' : 'sad', bounce: lt > 10 ? 6 : 0, look:[-1, -.3] });
+  withA(seg(lt, 10.4, 11), () => bubble(1070, 330, 'smooth video calls!', 1120, 420, 18));
+}
+
+/* 11 · the catches */
+function s11(lt){
+  const cards = [
+    [60, 110, 'Needs a clear view', 'of the sky'],
+    [660, 110, 'Heavy rain or snow', 'can weaken the signal'],
+    [60, 360, 'Busy areas share', 'limited capacity'],
+    [660, 360, 'Thousands of satellites', 'worry astronomers', 'and add to space junk']
+  ];
+  cards.forEach(([x, y, ...ls], i) => {
+    const t0 = .2 + i * 3.75, p = back(seg(lt, t0, t0 + .5));
+    if (p <= 0) return;
+    ctx.save(); ctx.translate(x + 280, y + 115); ctx.scale(p, p); ctx.translate(-x - 280, -y - 115);
+    rect(x, y, 560, 230, { fill:'#fff', r:20, w:2.4 });
+    const ix = x + 40, iy = y + 40;
+    if (i === 0){
+      dish(ix + 60, iy + 160, 1); tree(ix + 140, iy + 160, 1.4);
+      dotted([ix + 60, iy + 100], [ix + 190, iy - 10], P.blue, lt, 3);
+      txt('✕', ix + 140, iy + 40, 34, P.redD, 'center', true);
+    } else if (i === 1){
+      cloud(ix + 100, iy + 50, 1.6, P.gray);
+      for (let k = 0; k < 7; k++){ const rx = ix + 40 + k * 22, ry = iy + 100 + ((lt * 120 + k * 37) % 70); line(rx, ry, rx - 5, ry + 14, P.blue, 3); }
+    } else if (i === 2){
+      shape([[ix, iy + 10], [ix + 200, iy + 10], [ix + 125, iy + 100], [ix + 75, iy + 100]], { fill:P.yellowL, w:2.4, amp:.6 });
+      rect(ix + 75, iy + 100, 50, 80, { fill:P.yellowL, r:4, w:2.4 });
+      for (let k = 0; k < 8; k++){ ctx.fillStyle = SCOL[(k + 2) % 10]; ctx.fillRect(ix + 10 + (k % 4) * 46, iy - 20 + Math.floor(k / 4) * 22 + Math.sin(lt * 3 + k) * 3, 26, 14); }
+    } else {
+      for (let k = 0; k < 6; k++){ const sx2 = ix + 10 + k * 34 + (lt * 20) % 34; line(sx2, iy - 10, sx2 - 40, iy + 80, P.yellow, 3); }
+      for (let k = 0; k < 8; k++){ sparkle(ix + 20 + (k * 53) % 190, iy + 100 + (k * 31) % 70, .35, lt); }
+      rect(ix + 40, iy + 40, 110, 30, { fill:P.purple, r:8, w:2.2 });
+      line(ix + 95, iy + 70, ix + 70, iy + 130, P.ink, 3); line(ix + 95, iy + 70, ix + 120, iy + 130, P.ink, 3);
+    }
+    ls.forEach((s, k) => txt(s, x + 270, y + 115 + (k - (ls.length - 1) / 2) * 36, 25, P.ink, 'left', k === 0));
+    ctx.restore();
+  });
+}
+
+/* 12 · recap */
+function s12(lt){
+  const rows = [
+    ['Fly low', '→ short trip, fast replies'],
+    ['Launch thousands', '→ one is almost always overhead'],
+    ['Steer the beam', '→ the dish follows and switches, no moving parts'],
+    ['Ground stations + lasers', '→ plug into the regular internet']
+  ];
+  rows.forEach(([a, b], i) => {
+    const y = 120 + i * 105, t0 = .5 + i * 3, p = eOut(seg(lt, t0, t0 + .6));
+    if (p <= 0) return;
+    ctx.save(); ctx.translate((1 - p) * -60, 0);
+    withA(p, () => {
+      rect(60, y, 820, 84, { fill:'#fff', r:16, w:2.4 });
+      circ(112, y + 42, 24, { fill:SCOL[i + 2], w:2.2 }); txt(String(i + 1), 112, y + 43, 26, P.ink, 'center', true);
+      txt(a, 160, y + 28, 27, P.ink, 'left', true); txt(b, 160, y + 60, 20, P.inkSoft, 'left');
+      if (lt > t0 + 1) check(850, y + 42, 1.3);
+    });
+    ctx.restore();
+  });
+  const wave = lt > 11;
+  robot(1060, 520, 1.25, { t:lt, mood:'happy', look:[-1, -.2], aR: wave ? 1.9 + Math.sin(lt * 9) * .35 : .25, bounce: lt > 12 ? 5 : 0 });
+  withA(seg(lt, 11.4, 12), () => bubble(1050, 250, 'Thanks for watching!', 1060, 340, 19));
+  withA(seg(lt, 13, 13.8), () => tag('Next up: how does GPS know where you are?', 640, 578, 19, P.mintL));
+}
+
+const SCENES = [
+  { title:'No cable, no problem', caps:[
+    'Picture a cabin far from any town. No cable has ever been dug out here.',
+    'Starlink\'s answer: skip the cable, and send the internet down from space.',
+    'So how does it work? Let\'s follow one web page on its journey.' ], d:s1 },
+  { title:'The old way: far-off satellites', caps:[
+    'Older internet satellites hover about 36,000 kilometres up, far above Earth.',
+    'Light is fast, but a request goes up and down, and the reply goes up and down again.',
+    'Add it up and you wait around 600 milliseconds. That is the lag you feel.' ], d:s2 },
+  { title:'The big idea: fly low', caps:[
+    'Starlink flies much closer, only about 550 kilometres up.',
+    'On the same scale, the old satellites are around 65 times higher.',
+    'A shorter trip means a much faster reply.' ], d:s3 },
+  { title:'The catch: they zoom', caps:[
+    'The catch? Down low, satellites race around Earth at about 27,000 kilometres an hour.',
+    'From the ground, one flies across your whole sky in just a few minutes.',
+    'So a single satellite can never do the job alone.' ], d:s4 },
+  { title:'So launch thousands', caps:[
+    'So Starlink launches thousands of satellites, spread over many orbits around Earth.',
+    'Rockets carry dozens at a time, and the boosters get reused.',
+    'Wherever you stand, there is almost always one overhead to talk to.' ], d:s5 },
+  { title:'The clever flat dish', caps:[
+    'At home you set up a flat dish. Unlike an old dish, it does not turn to follow satellites.',
+    'Inside are lots of tiny antennas, all sending the same signal together.',
+    'Fire them with tiny time offsets, and the waves add up into a beam pointing where you want.' ], d:s6 },
+  { title:'Following a moving target', caps:[
+    'Because the beam is steered by timing, the dish can re-aim in a fraction of a second.',
+    'It tracks one satellite across the sky, then switches to the next one coming up.',
+    'These handoffs happen again and again, and you never notice.' ], d:s7 },
+  { title:'The journey of one click', caps:[
+    'Say you open a web page. Your request goes from the dish up to a satellite.',
+    'The satellite beams it down to a ground station, wired into the regular internet.',
+    'The website\'s answer takes the same trip back, in just tens of milliseconds.' ], d:s8 },
+  { title:'Lasers in space', caps:[
+    'Newer satellites also carry lasers that link them to each other.',
+    'Data can hop from satellite to satellite, like a relay race in space.',
+    'That helps reach ships, planes and remote places far from any ground station.' ], d:s9 },
+  { title:'Why it feels fast', caps:[
+    'Compare the delay. Old satellite internet: roughly 600 milliseconds.',
+    'Starlink is typically 25 to 60 milliseconds, not far from many home connections.',
+    'That is fast enough for video calls and online games.' ], d:s10 },
+  { title:'The catches', caps:[
+    'It is not perfect. The dish needs a clear view of the sky.',
+    'Heavy rain or snow can weaken the signal.',
+    'Busy areas share limited capacity, so speeds can dip.',
+    'And thousands of satellites worry astronomers and add to space junk.' ], d:s11 },
+  { title:'Recap', caps:[
+    'Fly low for speed. Launch thousands so one is always near.',
+    'Steer the beam with timing, and link to ground stations on the ground.',
+    'That is how a cabin in the middle of nowhere gets the internet from the sky.' ], d:s12 }
+];
+
+let T = 0, playing = true, ended = false, last = null;
+function render(t){
+  curT = t;
+  ctx.setTransform(K, 0, 0, K, 0, 0);
+  ctx.globalAlpha = 1; seed = (Math.floor(t * 8) + 1) * 7919;
+  paper();
+  const i = Math.min(N - 1, Math.floor(t / SCENE)), lt = t - i * SCENE, S = SCENES[i];
+  let a = Math.min(1, lt / .35); if (i < N - 1) a = Math.min(a, (SCENE - lt) / .3);
+  a = clamp(a);
+  ctx.globalAlpha = a; S.d(lt);
+  ctx.globalAlpha = a; header(i, S.title, lt);
+  const n = S.caps.length, Lc = SCENE / n, k = Math.min(n - 1, Math.floor(lt / Lc));
+  caption(S.caps[k], lt - k * Lc, Lc);
+  ctx.globalAlpha = 1; progress(t);
+}
+function resize(){
+  const dpr = Math.min(2, window.devicePixelRatio || 1), s = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+  cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr); K = cv.width / W;
+}
+function tick(now){
+  if (last === null) last = now;
+  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing){ T += dt; if (T >= DUR){ T = DUR; playing = false; ended = true; } }
+  render(T); requestAnimationFrame(tick);
+}
+function seek(t){ T = clamp(t, 0, DUR); ended = T >= DUR; if (ended) playing = false; }
+function toggle(){ if (ended){ seek(0); playing = true; } else playing = !playing; }
+cv.addEventListener('click', toggle);
+addEventListener('keydown', e => {
+  if (e.key === ' '){ e.preventDefault(); toggle(); }
+  else if (e.key === 'ArrowRight') seek(T + 5);
+  else if (e.key === 'ArrowLeft'){ seek(T - 5); ended = false; }
+  else if (e.key === 'r' || e.key === 'R'){ seek(0); playing = true; }
+  else if (/^[0-9]$/.test(e.key)){ seek(((+e.key + 9) % 10) * SCENE); ended = false; playing = true; }
+});
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ seek(qt); playing = false; ended = false; }
+window.renderAt = t => { seek(t); playing = false; ended = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
