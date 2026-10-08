@@ -228,9 +228,15 @@ function header(i, title, lt){
 }
 function caption(s, c, L){
   withA(Math.min(seg(c, .1, .4), seg(L - c, 0, .25)), () => {
-    const w = txtW(s, 20) + 44;
-    rect(W / 2 - w / 2, 626, w, 42, { fill:'rgba(255,255,255,.82)', r:21, w:1.8 });
-    txt(s, W / 2, 647, 20, P.ink);
+    const sz = 22; let lines = [s];
+    if (txtW(s, sz, true) > 1060){
+      const ws = s.split(' '); let best = 1, bd = 1e9;
+      for (let k = 1; k < ws.length; k++){ const d = Math.abs(txtW(ws.slice(0, k).join(' '), sz, true) - txtW(ws.slice(k).join(' '), sz, true)); if (d < bd){ bd = d; best = k; } }
+      lines = [ws.slice(0, best).join(' '), ws.slice(best).join(' ')];
+    }
+    const w = Math.max(...lines.map(l => txtW(l, sz, true))) + 48, h = lines.length * 30 + 18, y0 = 670 - h;
+    rect(W / 2 - w / 2, y0, w, h, { fill:'rgba(255,255,255,.9)', r:Math.min(24, h / 2), w:2.2 });
+    lines.forEach((l, i) => txt(l, W / 2, y0 + 9 + 15 + i * 30, sz, P.ink, 'center', true));
   });
 }
 function progress(T){
@@ -357,40 +363,48 @@ function dome(cx, gy, Rr){
    SCENES — each is 15 s long and receives local time lt ∈ [0,15]
    ===================================================================== */
 
-/* 1 · hook */
+/* 1 · hook (cold open, no part label) */
+function punch(s, x, y, size, fill = P.yellow, rot = 0, p = 1){
+  if (p <= 0) return;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(p, p);
+  ctx.font = `bold ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.lineWidth = size * .17; ctx.strokeStyle = P.ink; ctx.strokeText(s, 0, 0); ctx.fillStyle = fill; ctx.fillText(s, 0, 0);
+  ctx.restore();
+}
 function s1(lt){
+  const g = ctx.createLinearGradient(0, 0, 0, 520); g.addColorStop(0, '#c5cff2'); g.addColorStop(1, '#fde6dc');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 520);
+  { const s0 = seed; seed = 99;
+    for (let i = 0; i < 40; i++){ const x = R() * W, y = R() * 330, tw = .5 + .5 * Math.sin(lt * 3 + i); ctx.fillStyle = `rgba(255,255,255,${.4 + .5 * tw})`; ctx.beginPath(); ctx.arc(x, y, 1.5 + tw, 0, TAU); ctx.fill(); }
+    seed = s0; }
   ground(500);
-  const cols = [P.pink, P.blue, P.yellow, P.mint];
-  [[70, 70], [118, 104], [172, 60], [222, 88]].forEach(([x, h], k) => {
-    rect(x - 22, 500 - h, 44, h, { fill:cols[k], r:3, w:2 }); rect(x - 8, 500 - h + 12, 16, 12, { fill:'#fff', r:2, w:1.4, amp:.3 });
+  const conn = lt >= 6.4;
+  cabin(1040, 500, 1); dish(1160, 500, .9, conn ? 1 : 0);
+  withA(1 - seg(lt, 4.4, 5.2), () => {
+    for (let k = 0; k < 6; k++){
+      const sp = 300 + k * 40, x = ((lt * sp + k * 260) % 1500) - 110, y = 110 + k * 34;
+      line(x - 90, y, x - 16, y, P.inkSoft, 2.5); sat(x, y, .9, 0, 0);
+    }
   });
-  txt('town with internet', 150, 548, 17, P.ink);
-  const u = eOut(seg(lt, .5, 3));
-  if (u > 0) poly([[250, 522], [250 + u * 450, 522]], { stroke:P.ink, w:6, amp:.5 });
-  withA(seg(lt, 3, 3.6), () => {
-    poly([[700, 522], [960, 522]], { stroke:P.grayD, w:4, dash:[8, 10] });
-    circ(780, 522, 17, { fill:P.yellowL, w:2 }); txt('?', 780, 523, 22, P.ink, 'center', true);
-    txt('too far to dig', 770, 480, 19, P.redD, 'center', true);
+  withA(1 - seg(lt, 4.4, 5), () => {
+    punch('THOUSANDS', 640, 200, 96, P.yellow, -.03, back(seg(lt, .2, .6)));
+    withA(seg(lt, .8, 1.2), () => tag('of satellites, over your head right now', 640, 268, 22, '#fff'));
+    punch('27,000 km/h', 560, 365, 104, P.red, .03, back(seg(lt, 1.8, 2.2)));
   });
-  cabin(1040, 500, 1); dish(1160, 500, .9);
-  const conn = lt >= 7.6;
-  wifi(1040, 330, 1, conn ? 3 : 0, !conn);
-  const mood = lt < 5.5 ? 'sad' : lt < 9.5 ? 'wow' : 'happy';
-  robot(900, 505, .75, { t:lt, mood, look:[1, -.3], aR: conn ? 1.9 + Math.sin(lt * 8) * .3 : .25 });
-  withA(seg(lt, 1, 1.5) * (1 - seg(lt, 4.5, 5)), () => bubble(840, 350, 'No signal…', 890, 405, 18));
-  withA(seg(lt, 7.8, 8.3) * (1 - seg(lt, 11.5, 12)), () => bubble(840, 350, 'Connected!', 890, 405, 18));
-  const e = eOut(seg(lt, 4.5, 7.5)), sx = lerp(1380, 880, e), sy = lerp(40, 170, e);
-  sat(sx, sy, 1.4, -.15, conn ? 1 : 0);
-  withA(seg(lt, 7.2, 8), () => dotted([sx, sy + 14], [1160, 452], P.blue, lt, 3));
-  if (conn) sparkle(sx + 50, sy - 30 + Math.sin(lt * 4) * 4, 1, lt);
-  const p = back(seg(lt, 9.5, 10.5));
-  if (p > 0){
-    ctx.save(); ctx.translate(380, 190); ctx.scale(p, p);
-    txt('How does Starlink work?', 0, 0, 46, P.ink, 'center', true);
-    poly([[-270, 28], [-90, 32], [90, 26], [270, 30]], { stroke:P.yellow, w:6, amp:.5, seg:80 });
-    ctx.restore();
+  robot(900, 505, .75, { t:lt, mood: lt < 5 ? 'wow' : lt < 10 ? 'happy' : 'wow', look:[.4, -1], bounce: lt < 5 ? 6 : 0, aR: conn && lt < 10 ? 1.9 + Math.sin(lt * 8) * .3 : .25 });
+  const p1 = back(seg(lt, 5.2, 5.8)) * (1 - seg(lt, 9.4, 10));
+  if (p1 > 0){
+    poly([[480, 522], [760, 522]], { stroke:P.ink, w:6, amp:.5 }); txt('✕', 800, 522, 34, P.redD, 'center', true);
+    punch('no cable. no phone line.', 400, 250, 50, '#fff', -.02, p1);
   }
-  withA(seg(lt, 10.5, 11.5), () => txt('internet from space, step by step', 380, 245, 22, P.inkSoft));
+  if (lt > 5) wifi(1040, 330, 1, conn ? 3 : 0, !conn);
+  const e = eOut(seg(lt, 5, 6.5)), sx = lerp(1380, 900, e), sy = lerp(60, 170, e);
+  if (lt > 5){ sat(sx, sy, 1.4, -.15, conn ? 1 : 0); withA(seg(lt, 6.6, 7.2), () => dotted([sx, sy + 14], [1160, 452], P.blue, lt, 3)); }
+  withA(seg(lt, 7, 7.5) * (1 - seg(lt, 9.4, 9.9)), () => bubble(840, 350, 'I\'m online!', 890, 405, 20));
+  punch('HOW?', 400, 255, 170, P.red, -.05, back(seg(lt, 10, 10.5)));
+  withA(seg(lt, 10.8, 11.4), () => txt('the trick is simpler than you think', 400, 370, 30, P.ink, 'center', true));
+  withA(seg(lt, 12.4, 13), () => { punch('How Starlink works', 640, 118, 46, '#fff', 0, 1); });
+  withA(seg(lt, 13.4, 14), () => tag('stay to the end  ▶', 400, 432, 22, P.yellow));
 }
 
 /* 2 · the old way */
@@ -581,7 +595,7 @@ function s7(lt){
     }
   }
   robot(440, gy + 8, .65, { t:lt, mood:'happy', look:[1, -.6] });
-  tag('the beam steers itself: no motors needed', 640, 128, 16, P.blueL);
+  tag('the beam is steered by timing, not by turning', 640, 128, 16, P.blueL);
 }
 
 /* 8 · journey of a click */
@@ -686,16 +700,16 @@ function s11(lt){
   });
 }
 
-/* 12 · recap */
+/* 12 · recap + call to action */
 function s12(lt){
   const rows = [
     ['Fly low', '→ short trip, fast replies'],
     ['Launch thousands', '→ one is almost always overhead'],
-    ['Steer the beam', '→ the dish follows and switches, no moving parts'],
+    ['Steer the beam', '→ the dish follows and switches by timing'],
     ['Ground stations + lasers', '→ plug into the regular internet']
   ];
   rows.forEach(([a, b], i) => {
-    const y = 120 + i * 105, t0 = .5 + i * 3, p = eOut(seg(lt, t0, t0 + .6));
+    const y = 120 + i * 105, t0 = .5 + i * 2.2, p = eOut(seg(lt, t0, t0 + .6));
     if (p <= 0) return;
     ctx.save(); ctx.translate((1 - p) * -60, 0);
     withA(p, () => {
@@ -706,62 +720,72 @@ function s12(lt){
     });
     ctx.restore();
   });
-  const wave = lt > 11;
+  const wave = lt > 10;
   robot(1060, 520, 1.25, { t:lt, mood:'happy', look:[-1, -.2], aR: wave ? 1.9 + Math.sin(lt * 9) * .35 : .25, bounce: lt > 12 ? 5 : 0 });
-  withA(seg(lt, 11.4, 12), () => bubble(1050, 250, 'Thanks for watching!', 1060, 340, 19));
-  withA(seg(lt, 13, 13.8), () => tag('Next up: how does GPS know where you are?', 640, 578, 19, P.mintL));
+  const sp = back(seg(lt, 9.5, 10.2)), sub = lt > 11.6;
+  if (sp > 0){
+    ctx.save(); ctx.translate(470, 574); ctx.scale(sp, sp);
+    rect(-120, -27, 240, 54, { fill: sub ? P.grayD : P.red, r:12, w:2.4 }); txt(sub ? 'SUBSCRIBED ✓' : 'SUBSCRIBE', 0, 1, 22, '#fff', 'center', true);
+    ctx.restore();
+  }
+  if (lt > 10.4 && lt < 12.6){
+    const m = eOut(seg(lt, 10.6, 11.5)), cx2 = lerp(760, 500, m), cy2 = lerp(500, 586, m) + (lt > 11.5 && lt < 11.7 ? 5 : 0);
+    ctx.save(); ctx.translate(cx2, cy2); shape([[0, 0], [0, 24], [6, 19], [11, 30], [15, 28], [10, 17], [18, 17]], { fill:'#fff', w:2, amp:.3 }); ctx.restore();
+  }
+  withA(seg(lt, 11.8, 12.4), () => bubble(1050, 250, 'Thanks for watching!', 1060, 340, 19));
+  withA(seg(lt, 12.8, 13.5), () => tag('Next: how does GPS work?', 1060, 140, 18, P.mintL));
 }
 
 const SCENES = [
-  { title:'No cable, no problem', caps:[
-    'Picture a cabin far from any town. No cable has ever been dug out here.',
-    'Starlink\'s answer: skip the cable, and send the internet down from space.',
-    'So how does it work? Let\'s follow one web page on its journey.' ], d:s1 },
-  { title:'The old way: far-off satellites', caps:[
-    'Older internet satellites hover about 36,000 kilometres up, far above Earth.',
-    'Light is fast, but a request goes up and down, and the reply goes up and down again.',
-    'Add it up and you wait around 600 milliseconds. That is the lag you feel.' ], d:s2 },
+  { title:'Cold open', hook:true, times:[0, 5, 10], caps:[
+    'Right now, thousands of satellites are racing over your head at 27,000 kilometres an hour.',
+    'And this cabin has no cable and no phone line, yet it is online.',
+    'How? The trick is simpler than you think, and I will show you in three minutes.' ], d:s1 },
+  { title:'Why old satellite internet was slow', caps:[
+    'Satellite internet is not new, but it used to be painfully slow. Here is why.',
+    'The satellites sit 36,000 kilometres up. Your request goes up and down, and so does the reply.',
+    'That adds up to about 600 milliseconds of lag. Now watch what Starlink changes.' ], d:s2 },
   { title:'The big idea: fly low', caps:[
-    'Starlink flies much closer, only about 550 kilometres up.',
+    'Starlink\'s big idea? Fly much lower, only about 550 kilometres up.',
     'On the same scale, the old satellites are around 65 times higher.',
-    'A shorter trip means a much faster reply.' ], d:s3 },
+    'Shorter trip, faster reply. Simple. But there is a catch.' ], d:s3 },
   { title:'The catch: they zoom', caps:[
-    'The catch? Down low, satellites race around Earth at about 27,000 kilometres an hour.',
-    'From the ground, one flies across your whole sky in just a few minutes.',
-    'So a single satellite can never do the job alone.' ], d:s4 },
+    'The catch: down low, satellites race around at about 27,000 kilometres an hour.',
+    'One flies across your whole sky in just a few minutes, then it is gone.',
+    'So one satellite can never do the job alone. What is the fix?' ], d:s4 },
   { title:'So launch thousands', caps:[
-    'So Starlink launches thousands of satellites, spread over many orbits around Earth.',
+    'Send up thousands of them, in rings all around the planet.',
     'Rockets carry dozens at a time, and the boosters get reused.',
-    'Wherever you stand, there is almost always one overhead to talk to.' ], d:s5 },
+    'Now, wherever you stand, there is almost always one overhead.' ], d:s5 },
   { title:'The clever flat dish', caps:[
-    'At home you set up a flat dish. Unlike an old dish, it does not turn to follow satellites.',
+    'But how does a flat dish keep up with all that motion? This is where it gets clever.',
     'Inside are lots of tiny antennas, all sending the same signal together.',
-    'Fire them with tiny time offsets, and the waves add up into a beam pointing where you want.' ], d:s6 },
+    'Shift each one\'s timing slightly, and the waves combine into a beam you can aim.' ], d:s6 },
   { title:'Following a moving target', caps:[
-    'Because the beam is steered by timing, the dish can re-aim in a fraction of a second.',
-    'It tracks one satellite across the sky, then switches to the next one coming up.',
-    'These handoffs happen again and again, and you never notice.' ], d:s7 },
+    'Change the timing, and the beam re-aims in a fraction of a second.',
+    'The dish tracks one satellite across the sky, then hands you to the next.',
+    'This happens again and again, and you never notice.' ], d:s7 },
   { title:'The journey of one click', caps:[
-    'Say you open a web page. Your request goes from the dish up to a satellite.',
-    'The satellite beams it down to a ground station, wired into the regular internet.',
-    'The website\'s answer takes the same trip back, in just tens of milliseconds.' ], d:s8 },
+    'So what happens when you open a web page? Your request goes up to a satellite.',
+    'It beams down to a ground station that is wired into the regular internet.',
+    'Then the answer makes the same trip back, in just tens of milliseconds.' ], d:s8 },
   { title:'Lasers in space', caps:[
-    'Newer satellites also carry lasers that link them to each other.',
-    'Data can hop from satellite to satellite, like a relay race in space.',
-    'That helps reach ships, planes and remote places far from any ground station.' ], d:s9 },
+    'Here is the part that blows my mind: the satellites also have lasers.',
+    'Data can hop from one satellite to the next, like a relay race in space.',
+    'That helps reach ships, planes and places far from any ground station.' ], d:s9 },
   { title:'Why it feels fast', caps:[
-    'Compare the delay. Old satellite internet: roughly 600 milliseconds.',
-    'Starlink is typically 25 to 60 milliseconds, not far from many home connections.',
-    'That is fast enough for video calls and online games.' ], d:s10 },
+    'So how much faster is it? Old satellite internet: roughly 600 milliseconds.',
+    'Starlink: typically 25 to 60 milliseconds, not far from many home connections.',
+    'That is enough for video calls and online games.' ], d:s10 },
   { title:'The catches', caps:[
-    'It is not perfect. The dish needs a clear view of the sky.',
+    'Now, it is not perfect. The dish needs a clear view of the sky.',
     'Heavy rain or snow can weaken the signal.',
     'Busy areas share limited capacity, so speeds can dip.',
     'And thousands of satellites worry astronomers and add to space junk.' ], d:s11 },
   { title:'Recap', caps:[
-    'Fly low for speed. Launch thousands so one is always near.',
-    'Steer the beam with timing, and link to ground stations on the ground.',
-    'That is how a cabin in the middle of nowhere gets the internet from the sky.' ], d:s12 }
+    'So: fly low for speed, launch thousands, steer the beam with timing, link to the ground.',
+    'That is how a cabin in the middle of nowhere gets internet from the sky.',
+    'If that made you curious, subscribe, and tell me what to explain next.' ], d:s12 }
 ];
 
 let T = 0, playing = true, ended = false, last = null;
@@ -773,10 +797,10 @@ function render(t){
   const i = Math.min(N - 1, Math.floor(t / SCENE)), lt = t - i * SCENE, S = SCENES[i];
   let a = Math.min(1, lt / .35); if (i < N - 1) a = Math.min(a, (SCENE - lt) / .3);
   a = clamp(a);
-  ctx.globalAlpha = a; S.d(lt);
-  ctx.globalAlpha = a; header(i, S.title, lt);
-  const n = S.caps.length, Lc = SCENE / n, k = Math.min(n - 1, Math.floor(lt / Lc));
-  caption(S.caps[k], lt - k * Lc, Lc);
+  ctx.globalAlpha = a; ctx.save(); const zp = 1 + .045 * (1 - seg(lt, 0, .3)); ctx.translate(W / 2, H / 2); ctx.scale(zp, zp); ctx.translate(-W / 2, -H / 2); S.d(lt); ctx.restore();
+  ctx.globalAlpha = a; if (!S.hook) header(i, S.title, lt);
+  const tm = S.times || S.caps.map((_, q) => q * SCENE / S.caps.length); let k = 0; tm.forEach((v, q) => { if (lt >= v) k = q; });
+  caption(S.caps[k], lt - tm[k], (tm[k + 1] ?? SCENE) - tm[k]);
   ctx.globalAlpha = 1; progress(t);
 }
 function resize(){
