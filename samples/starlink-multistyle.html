@@ -23,7 +23,7 @@
              ?t=95 in the URL starts paused at that time (seconds)
    Sizes, speeds and routes are simplified and labelled on screen.
    ===================================================================== */
-const W = 1280, H = 720, DUR = 180, SCENE = 15, N = 12;
+const W = 1280, H = 720, SCENE = 15, N = 12; let DUR = 180;
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let K = 1;
 
@@ -246,11 +246,11 @@ function caption(s, c, L, dark){
 function progress(T, dark){
   const x0 = 44, x1 = W - 170, y = 696, sw = (x1 - x0) / N;
   for (let k = 0; k < N; k++){
-    const a = x0 + k * sw + 3, b = x0 + (k + 1) * sw - 3, f = clamp((T - k * SCENE) / SCENE);
+    const a = x0 + k * sw + 3, b = x0 + (k + 1) * sw - 3, f = clamp((T - STARTS[k]) / SCENES[k].dur);
     ctx.fillStyle = dark ? 'rgba(255,255,255,.2)' : 'rgba(74,68,83,.1)'; ctx.beginPath(); ctx.roundRect(a, y - 4, b - a, 8, 4); ctx.fill();
     if (f > 0){ ctx.fillStyle = SCOL[k % 10]; ctx.beginPath(); ctx.roundRect(a, y - 4, Math.max(8, (b - a) * f), 8, 4); ctx.fill(); }
   }
-  txt(ended ? 'click to replay' : `${T.toFixed(1)}s / ${DUR}s`, W - 44, y, 15, dark ? '#9aa6d6' : P.inkSoft, 'right');
+  txt(ended ? 'click to replay' : `${T.toFixed(1)}s / ${DUR.toFixed(0)}s`, W - 44, y, 15, dark ? '#9aa6d6' : P.inkSoft, 'right');
   if (!playing && !ended){ ctx.fillStyle = dark ? 'rgba(255,255,255,.7)' : 'rgba(74,68,83,.55)'; ctx.fillRect(W - 60, 16, 6, 20); ctx.fillRect(W - 50, 16, 6, 20); }
 }
 
@@ -987,71 +987,68 @@ function s12(lt){
 function s10f(lt){ flatBg(); s10(lt); }
 function s11f(lt){ flatBg(); s11(lt); }
 function s12r(lt){ paper(); s12(lt); }
+/* Every part has its own length (dur, seconds). Its drawing code runs on a 15 s timeline that is
+   sped up to fit, so the pictures stay in step with the shorter narration. */
 const SCENES = [
-  { title:'Cold open', hook:true, dark:true, times:[0, 5, 10], caps:[
-    'Right now, thousands of satellites are racing over your head at 27,000 kilometres an hour.',
-    'And this camper has no cable and no phone line, yet it is online.',
-    'How? The trick is simpler than you think. Let us take it apart.' ], d:s1 },
-  { title:'Why old satellite internet was slow', dark:true, caps:[
-    'Satellite internet is not new, but it used to be painfully slow. Here is why.',
-    'The satellites sit 36,000 kilometres up. Your request goes up and down, and so does the reply.',
-    'That adds up to about 600 milliseconds of lag. Now watch what Starlink changes.' ], d:s2 },
-  { title:'The big idea: fly low', dark:true, caps:[
-    'Starlink\'s big idea? Fly much lower, only about 550 kilometres up.',
-    'On the same scale, the old satellites are around 65 times higher. Shorter trip, faster reply.',
-    'The catch: down low they race around at 27,000 kilometres an hour, so one satellite is never enough.' ], d:s3 },
-  { title:'Inside the satellite', dark:true, caps:[
-    'Let us open one up. It is built as a flat panel, so dozens can stack in one rocket.',
-    'A big solar array makes power. Phased-array antennas talk to your dish, and other antennas talk to ground stations.',
-    'Lasers link it to its neighbours, an electric thruster keeps it in orbit, and a star tracker tells it where it points.' ], d:s4 },
-  { title:'The clever flat dish', dark:true, caps:[
-    'At home, a flat dish packed with tiny antennas does the talking.',
-    'Fire them with tiny time offsets, and the waves add up into a beam pointing where you want.',
-    'Change the timing, and the beam re-aims in a fraction of a second.' ], d:s5 },
-  { title:'Following a moving target', dark:true, caps:[
-    'Now the dish has a moving target: satellites cross the sky in minutes.',
-    'It locks onto one, then hands you off to the next one coming up.',
-    'This repeats again and again, and you never notice.' ], d:s6 },
-  { title:'Getting up there: launches', caps:[
-    'Satellites get there by rocket. Launches lift off from Florida and California, dozens at a time.',
-    'The boosters land and fly again, which keeps launches cheaper.',
-    'Released at a lower height, the satellites use their own thrusters to climb to about 550 kilometres.' ], d:s7 },
-  { title:'Thousands of orbits', caps:[
-    'Seen from above, their paths weave across the whole planet, in rings tilted at different angles.',
-    'Add more rings and more satellites, and the whole world gets covered.',
-    'Wherever you stand, their footprints overlap, so there is almost always one overhead.' ], d:s8 },
-  { title:'The journey of one click', caps:[
-    'So what happens when you open a web page? Your request goes up to a satellite.',
-    'It can hop to another satellite by laser, then drop to a ground station wired into the regular internet.',
-    'The answer makes the same trip back, in just tens of milliseconds.' ], d:s9 },
-  { title:'Why it feels fast', flat:true, caps:[
-    'So how much faster is it? Old satellite internet: roughly 600 milliseconds.',
-    'Starlink: typically 25 to 60 milliseconds, not far from many home connections.',
-    'That is enough for video calls and online games.' ], d:s10f },
-  { title:'The catches', flat:true, caps:[
-    'Now, it is not perfect. The dish needs a clear view of the sky.',
-    'Heavy rain or snow can weaken the signal.',
-    'Busy areas share limited capacity, so speeds can dip.',
-    'And thousands of satellites worry astronomers and add to space junk.' ], d:s11f },
-  { title:'Recap', caps:[
-    'So: fly low for speed, launch thousands, steer the beam with timing, link to the ground.',
-    'That is how a cabin in the middle of nowhere gets internet from the sky.',
-    'If that made you curious, subscribe, and tell me what to explain next.' ], d:s12r }
+  { title:'Cold open', hook:true, dark:true, dur:10, times:[0, 3.3, 6.6], caps:[
+    'Thousands of satellites are overhead right now.',
+    'This camper has no cable, yet it is online.',
+    'How? Let us take it apart.' ], d:s1 },
+  { title:'Why old satellite internet was slow', dark:true, dur:9, times:[0, 3.2], caps:[
+    'Old satellites sit 36,000 kilometres up.',
+    'Every request goes up and down, and so does the reply: about 600 milliseconds of lag.' ], d:s2 },
+  { title:'The big idea: fly low', dark:true, dur:11, times:[0, 3.5], caps:[
+    'Starlink flies much lower: about 550 kilometres up.',
+    'That is 65 times closer. But down low they move at 27,000 kilometres an hour, so one satellite is not enough.' ], d:s3 },
+  { title:'Inside the satellite', dark:true, dur:12, times:[0, 3.5, 8], caps:[
+    'Each satellite is a flat panel, so dozens fit in one rocket.',
+    'A solar array makes power. Antennas talk to your dish and to ground stations.',
+    'Lasers link it to its neighbours. A thruster and star tracker keep it on course.' ], d:s4 },
+  { title:'The clever flat dish', dark:true, dur:9, times:[0, 3], caps:[
+    'At home, a flat dish packs tiny antennas.',
+    'Fire them with tiny time offsets and the waves combine into a beam you can aim, instantly.' ], d:s5 },
+  { title:'Following a moving target', dark:true, dur:9, caps:[
+    'As satellites cross the sky, the dish hands you to the next one, again and again.' ], d:s6 },
+  { title:'Getting up there: launches', dur:12, times:[0, 4, 7.2], caps:[
+    'Rockets launch dozens at a time from Florida and California.',
+    'The boosters land and fly again.',
+    'Released low, the satellites climb to 550 kilometres on their own thrusters.' ], d:s7 },
+  { title:'Thousands of orbits', dur:9, times:[0, 3], caps:[
+    'Their orbits weave around the planet in tilted rings.',
+    'So wherever you stand, there is almost always one overhead.' ], d:s8 },
+  { title:'The journey of one click', dur:12, times:[0, 3.6, 8], caps:[
+    'Open a web page, and the request goes up to a satellite.',
+    'Satellites relay it by laser to a ground station wired into the internet.',
+    'The reply comes back the same way in tens of milliseconds.' ], d:s9 },
+  { title:'Why it feels fast', flat:true, dur:10, times:[0, 3.5, 7], caps:[
+    'Old satellite internet: about 600 milliseconds.',
+    'Starlink: typically 25 to 60, close to many home connections.',
+    'Enough for video calls and games.' ], d:s10f },
+  { title:'The catches', flat:true, dur:11, times:[0, 2.7, 5.4, 8.1], caps:[
+    'The dish needs a clear view of the sky.',
+    'Heavy rain or snow weakens the signal.',
+    'Busy areas share limited capacity.',
+    'And all those satellites worry astronomers.' ], d:s11f },
+  { title:'Recap', dur:10, times:[0, 5.5], caps:[
+    'Fly low. Launch thousands. Steer the beam. Link to the ground.',
+    'Subscribe, and tell me what to explain next.' ], d:s12r }
 ];
+const STARTS = []; { let a = 0; SCENES.forEach(s => { STARTS.push(a); a += s.dur; }); DUR = a; }
 
 let T = 0, playing = true, ended = false, last = null;
 function render(t){
   curT = t; ctx.save();
   ctx.setTransform(K, 0, 0, K, 0, 0); ctx.globalAlpha = 1; FLAT = false; seed = (Math.floor(t * 8) + 1) * 7919;
-  const i = Math.min(N - 1, Math.floor(t / SCENE)), lt = t - i * SCENE, S = SCENES[i];
+  let i = N - 1; for (let q = 0; q < N; q++){ if (t < STARTS[q] + SCENES[q].dur){ i = q; break; } }
+  const S = SCENES[i], lt = t - STARTS[i], la = lt * SCENE / S.dur;
   ctx.fillStyle = S.dark ? '#0e1433' : P.paper; ctx.fillRect(-2, -2, W + 6, H + 6);
-  let a = Math.min(1, lt / .3); if (i < N - 1) a = Math.min(a, (SCENE - lt) / .3);
+  let a = Math.min(1, lt / .3); if (i < N - 1) a = Math.min(a, (S.dur - lt) / .3);
   a = clamp(a);
   ctx.globalAlpha = a; FLAT = !!S.flat;
-  ctx.save(); const zp = 1 + .04 * (1 - seg(lt, 0, .3)); ctx.translate(W / 2, H / 2); ctx.scale(zp, zp); ctx.translate(-W / 2, -H / 2); S.d(lt); ctx.restore();
+  ctx.save(); const zp = 1 + .04 * (1 - seg(lt, 0, .3)); ctx.translate(W / 2, H / 2); ctx.scale(zp, zp); ctx.translate(-W / 2, -H / 2); S.d(la); ctx.restore();
   FLAT = false; ctx.globalAlpha = a; if (!S.hook) header(i, S.title, lt, S.dark);
-  const tm = S.times || S.caps.map((_, q) => q * SCENE / S.caps.length); let k = 0; tm.forEach((v, q) => { if (lt >= v) k = q; });
-  caption(S.caps[k], lt - tm[k], (tm[k + 1] ?? SCENE) - tm[k], S.dark);
+  const tm = S.times || S.caps.map((_, q) => q * S.dur / S.caps.length); let k = 0; tm.forEach((v, q) => { if (lt >= v) k = q; });
+  caption(S.caps[k], lt - tm[k], (tm[k + 1] ?? S.dur) - tm[k], S.dark);
   ctx.globalAlpha = 1; progress(t, S.dark);
   ctx.restore();
 }
