@@ -254,11 +254,11 @@ function progress(T){
 let curT = 0;
 const LANDS = [[.5,.5,.2],[2.1,.62,.24],[3.6,.4,.16],[4.9,.7,.22],[5.8,.3,.13],[1.2,.85,.18]];
 const LANDS_CAP = [[-2.5,.93,.07],[-2.05,.95,.08],[-1.6,.94,.07],[-1.15,.95,.08],[-.7,.93,.06],[-2.85,.9,.06]];
-function earth(cx, cy, Rr, cap){
+function earth(cx, cy, Rr, cap, rot = 0){
   ctx.fillStyle = P.blue; ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.fill();
   ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.clip(); ctx.fillStyle = P.green;
   for (const [a, r, s] of (cap ? LANDS_CAP : LANDS)){
-    ctx.beginPath(); ctx.ellipse(cx + Math.cos(a) * Rr * r, cy + Math.sin(a) * Rr * r, Rr * s, Rr * s * (cap ? .35 : .6), a + (cap ? Math.PI / 2 : 0), 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + Math.cos(a + rot) * Rr * r, cy + Math.sin(a + rot) * Rr * r, Rr * s, Rr * s * (cap ? .35 : .6), a + rot + (cap ? Math.PI / 2 : 0), 0, TAU); ctx.fill();
   }
   ctx.restore();
   ctx.strokeStyle = P.ink; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, Rr, 0, TAU); ctx.stroke();
@@ -371,40 +371,67 @@ function punch(s, x, y, size, fill = P.yellow, rot = 0, p = 1){
   ctx.lineWidth = size * .17; ctx.strokeStyle = P.ink; ctx.strokeText(s, 0, 0); ctx.fillStyle = fill; ctx.fillText(s, 0, 0);
   ctx.restore();
 }
-function s1(lt){
-  const g = ctx.createLinearGradient(0, 0, 0, 520); g.addColorStop(0, '#c5cff2'); g.addColorStop(1, '#fde6dc');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 520);
-  { const s0 = seed; seed = 99;
-    for (let i = 0; i < 40; i++){ const x = R() * W, y = R() * 330, tw = .5 + .5 * Math.sin(lt * 3 + i); ctx.fillStyle = `rgba(255,255,255,${.4 + .5 * tw})`; ctx.beginPath(); ctx.arc(x, y, 1.5 + tw, 0, TAU); ctx.fill(); }
+function coldOpen(lt){
+  const cx = 640, cy = 372, Re = 165, Rr = 250, NR = 10, NS = 16, zoom = 1 + .55 * eIO(seg(lt, 3.6, 5.2));
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#141a38'); g.addColorStop(1, '#2a2150'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  { const s0 = seed; seed = 55;
+    for (let i = 0; i < 70; i++){ const x = R() * W, y = R() * H, tw = .5 + .5 * Math.sin(lt * 2.5 + i); ctx.fillStyle = `rgba(255,255,255,${.25 + .55 * tw})`; ctx.beginPath(); ctx.arc(x, y, 1 + tw, 0, TAU); ctx.fill(); }
     seed = s0; }
-  ground(500);
-  const conn = lt >= 6.4;
-  cabin(1040, 500, 1); dish(1160, 500, .9, conn ? 1 : 0);
-  withA(1 - seg(lt, 4.4, 5.2), () => {
-    for (let k = 0; k < 6; k++){
-      const sp = 300 + k * 40, x = ((lt * sp + k * 260) % 1500) - 110, y = 110 + k * 34;
-      line(x - 90, y, x - 16, y, P.inkSoft, 2.5); sat(x, y, .9, 0, 0);
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(zoom, zoom); ctx.translate(-cx, -cy);
+  const pt = (k, a) => { const phi = k * Math.PI / NR, ex = Rr * Math.cos(a), ey = Rr * .3 * Math.sin(a); return [cx + ex * Math.cos(phi) - ey * Math.sin(phi), cy + ex * Math.sin(phi) + ey * Math.cos(phi)]; };
+  const ring = fr => {
+    ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.lineWidth = 1.4;
+    for (let k = 0; k < NR; k++){
+      ctx.beginPath(); let pen = false;
+      for (let q = 0; q <= 60; q++){ const a = q / 60 * TAU, ok = (Math.sin(a) >= 0) === fr, p = pt(k, a); if (ok){ pen ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); pen = true; } else pen = false; }
+      ctx.stroke();
     }
+  };
+  const sats = fr => {
+    for (let k = 0; k < NR; k++) for (let j = 0; j < NS; j++){
+      const a = j / NS * TAU + lt * (.5 + .08 * (k % 4)) + k * .4;
+      if ((Math.sin(a) >= 0) !== fr) continue;
+      const p = pt(k, a), sz = fr ? 1 : .75;
+      ctx.fillStyle = 'rgba(255,230,140,.28)'; ctx.beginPath(); ctx.arc(p[0], p[1], 8 * sz, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fff7d6'; ctx.fillRect(p[0] - 5 * sz, p[1] - 2 * sz, 10 * sz, 4 * sz);
+    }
+  };
+  ring(false); sats(false);
+  const gl = ctx.createRadialGradient(cx, cy, Re * .9, cx, cy, Re * 1.45); gl.addColorStop(0, 'rgba(140,200,255,.45)'); gl.addColorStop(1, 'rgba(140,200,255,0)');
+  ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(cx, cy, Re * 1.45, 0, TAU); ctx.fill();
+  earth(cx, cy, Re, false, lt * .2); ring(true); sats(true);
+  ctx.restore();
+  punch('THOUSANDS', 330, 140, 84, P.yellow, -.04, back(seg(lt, .2, .6)));
+  withA(seg(lt, .8, 1.2), () => tag('of satellites, over your head right now', 330, 205, 20, '#fff'));
+  punch('27,000 km/h', 960, 560, 84, P.red, .04, back(seg(lt, 1.8, 2.2)));
+}
+function s1(lt){
+  const cab = seg(lt, 4.8, 5.2);
+  if (cab > 0) (fn => fn())(() => {
+    const g = ctx.createLinearGradient(0, 0, 0, 520); g.addColorStop(0, '#c5cff2'); g.addColorStop(1, '#fde6dc');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, 520);
+    { const s0 = seed; seed = 99;
+      for (let i = 0; i < 40; i++){ const x = R() * W, y = R() * 330, tw = .5 + .5 * Math.sin(lt * 3 + i); ctx.fillStyle = `rgba(255,255,255,${.4 + .5 * tw})`; ctx.beginPath(); ctx.arc(x, y, 1.5 + tw, 0, TAU); ctx.fill(); }
+      seed = s0; }
+    ground(500);
+    const conn = lt >= 6.4;
+    cabin(1040, 500, 1); dish(1160, 500, .9, conn ? 1 : 0);
+    robot(900, 505, .75, { t:lt, mood: lt < 10 ? 'happy' : 'wow', look:[.4, -1], aR: conn && lt < 10 ? 1.9 + Math.sin(lt * 8) * .3 : .25 });
+    const p1 = back(seg(lt, 5.2, 5.8)) * (1 - seg(lt, 9.4, 10));
+    if (p1 > 0){
+      poly([[480, 522], [760, 522]], { stroke:P.ink, w:6, amp:.5 }); txt('✕', 800, 522, 34, P.redD, 'center', true);
+      punch('no cable. no phone line.', 400, 250, 50, '#fff', -.02, p1);
+    }
+    wifi(1040, 330, 1, conn ? 3 : 0, !conn);
+    const e = eOut(seg(lt, 5, 6.5)), sx = lerp(1380, 900, e), sy = lerp(60, 170, e);
+    sat(sx, sy, 1.4, -.15, conn ? 1 : 0); withA(seg(lt, 6.6, 7.2), () => dotted([sx, sy + 14], [1160, 452], P.blue, lt, 3));
+    withA(seg(lt, 7, 7.5) * (1 - seg(lt, 9.4, 9.9)), () => bubble(840, 350, 'I\'m online!', 890, 405, 20));
+    punch('HOW?', 400, 255, 170, P.red, -.05, back(seg(lt, 10, 10.5)));
+    withA(seg(lt, 10.8, 11.4), () => txt('the trick is simpler than you think', 400, 370, 30, P.ink, 'center', true));
+    withA(seg(lt, 12.4, 13), () => punch('How Starlink works', 640, 118, 46, '#fff', 0, 1));
+    withA(seg(lt, 13.4, 14), () => tag('stay to the end  ▶', 400, 432, 22, P.yellow));
   });
-  withA(1 - seg(lt, 4.4, 5), () => {
-    punch('THOUSANDS', 640, 200, 96, P.yellow, -.03, back(seg(lt, .2, .6)));
-    withA(seg(lt, .8, 1.2), () => tag('of satellites, over your head right now', 640, 268, 22, '#fff'));
-    punch('27,000 km/h', 560, 365, 104, P.red, .03, back(seg(lt, 1.8, 2.2)));
-  });
-  robot(900, 505, .75, { t:lt, mood: lt < 5 ? 'wow' : lt < 10 ? 'happy' : 'wow', look:[.4, -1], bounce: lt < 5 ? 6 : 0, aR: conn && lt < 10 ? 1.9 + Math.sin(lt * 8) * .3 : .25 });
-  const p1 = back(seg(lt, 5.2, 5.8)) * (1 - seg(lt, 9.4, 10));
-  if (p1 > 0){
-    poly([[480, 522], [760, 522]], { stroke:P.ink, w:6, amp:.5 }); txt('✕', 800, 522, 34, P.redD, 'center', true);
-    punch('no cable. no phone line.', 400, 250, 50, '#fff', -.02, p1);
-  }
-  if (lt > 5) wifi(1040, 330, 1, conn ? 3 : 0, !conn);
-  const e = eOut(seg(lt, 5, 6.5)), sx = lerp(1380, 900, e), sy = lerp(60, 170, e);
-  if (lt > 5){ sat(sx, sy, 1.4, -.15, conn ? 1 : 0); withA(seg(lt, 6.6, 7.2), () => dotted([sx, sy + 14], [1160, 452], P.blue, lt, 3)); }
-  withA(seg(lt, 7, 7.5) * (1 - seg(lt, 9.4, 9.9)), () => bubble(840, 350, 'I\'m online!', 890, 405, 20));
-  punch('HOW?', 400, 255, 170, P.red, -.05, back(seg(lt, 10, 10.5)));
-  withA(seg(lt, 10.8, 11.4), () => txt('the trick is simpler than you think', 400, 370, 30, P.ink, 'center', true));
-  withA(seg(lt, 12.4, 13), () => { punch('How Starlink works', 640, 118, 46, '#fff', 0, 1); });
-  withA(seg(lt, 13.4, 14), () => tag('stay to the end  ▶', 400, 432, 22, P.yellow));
+  if (cab < 1) withA(1 - cab, () => coldOpen(lt));
 }
 
 /* 2 · the old way */
