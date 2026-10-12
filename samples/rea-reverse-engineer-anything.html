@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>REA: Reverse Engineer Anything</title>
+<style>
+  html,body{margin:0;height:100%;background:#ece5da;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;border-radius:12px;box-shadow:0 12px 40px rgba(80,60,90,.18);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="A 40 second hand-drawn animation where Robo, a red square robot, explains REA, a free toolbox that lets an AI assistant look inside apps and explain how their features work."></canvas>
+<script>
+'use strict';
+/* =====================================================================
+   REA: Reverse Engineer Anything — a 40 s hand-drawn canvas animation starring Robo.
+   Every frame is drawn from scratch with Canvas 2D; no images, no libs.
+   Controls: click / space = pause · ← → = seek 2 s · 1–8 = jump to scene
+             R = restart · ?t=12.5 in the URL starts paused at that time
+   ===================================================================== */
+const W = 1280, H = 720, DUR = 40, SCENE = 5, NS = 8;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let K = 1;
+
+const P = {
+  paper:'#fbf6ec', ink:'#4a4453', inkSoft:'#8a8294',
+  red:'#f2837b', redD:'#d9665f', pink:'#f9c9d2', pinkL:'#fde8ec',
+  blue:'#a9d6f2', blueL:'#e3f2fc', green:'#a8dca0', greenD:'#6fae73', greenL:'#e3f5df',
+  yellow:'#fbe39a', yellowL:'#fff5d1', purple:'#cdb8ee', purpleL:'#efe6fb',
+  orange:'#fbc79a', orangeL:'#feecdc', mint:'#aee8d6', mintL:'#e2f7f0',
+  gray:'#e2dcd2', grayD:'#b1a9a0'
+};
+const SCOL = ['#f9b8c4','#cdb8ee','#a9d6f2','#a8dca0','#fbe39a','#fbc79a','#d9c2f0','#aee8d6','#c7e59a','#f2837b'];
+const FONT = '"Comic Sans MS","Comic Neue","Chalkboard SE","Marker Felt","Segoe Print",cursive';
+const MONO = '"Courier New",ui-monospace,monospace';
+
+/* ---------- math + seeded jitter (the "boil" of a hand-drawn line) ---------- */
+let seed = 1;
+function R(){ seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+const J = a => (R() * 2 - 1) * a;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const back = t => { if (t <= 0) return 0; const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const TAU = Math.PI * 2;
+
+function withA(a, fn){ if (a <= 0) return; const g = ctx.globalAlpha; ctx.globalAlpha = g * Math.min(1, a); fn(); ctx.globalAlpha = g; }
+
+/* ---------- sketchy primitives ---------- */
+function subdiv(pts, closed, maxL){
+  const out = [], n = pts.length, m = closed ? n : n - 1;
+  for (let i = 0; i < m; i++){
+    const a = pts[i], b = pts[(i + 1) % n]; out.push(a);
+    const k = Math.floor(Math.hypot(b[0] - a[0], b[1] - a[1]) / maxL);
+    for (let j = 1; j <= k; j++){ const u = j / (k + 1); out.push([lerp(a[0], b[0], u), lerp(a[1], b[1], u)]); }
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
+}
+function trace(pts, closed, amp){
+  const q = pts.map(p => [p[0] + J(amp), p[1] + J(amp)]), n = q.length;
+  ctx.beginPath();
+  if (closed){
+    let m = [(q[n-1][0] + q[0][0]) / 2, (q[n-1][1] + q[0][1]) / 2]; ctx.moveTo(m[0], m[1]);
+    for (let i = 0; i < n; i++){ const b = q[(i + 1) % n]; m = [(q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2]; ctx.quadraticCurveTo(q[i][0], q[i][1], m[0], m[1]); }
+    ctx.closePath();
+  } else {
+    ctx.moveTo(q[0][0], q[0][1]);
+    for (let i = 1; i < n - 1; i++){ const b = q[i + 1]; ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2); }
+    ctx.lineTo(q[n-1][0], q[n-1][1]);
+  }
+}
+function bbox(pts){ let a = 1e9, b = 1e9, c = -1e9, d = -1e9; for (const p of pts){ a = Math.min(a, p[0]); b = Math.min(b, p[1]); c = Math.max(c, p[0]); d = Math.max(d, p[1]); } return [a, b, c, d]; }
+function hatch(x0, y0, x1, y1, c, gap = 9){
+  const g = ctx.globalAlpha; ctx.globalAlpha = g * .3; ctx.strokeStyle = c; ctx.lineWidth = 1.3; ctx.beginPath();
+  for (let d = x0 - (y1 - y0); d < x1; d += gap){ ctx.moveTo(d + J(1), y1 + J(1)); ctx.lineTo(d + (y1 - y0) + J(1), y0 + J(1)); }
+  ctx.stroke(); ctx.globalAlpha = g;
+}
+function shape(pts, o = {}){
+  const closed = o.closed !== false, amp = o.amp ?? 1.2, w = o.w ?? 2.2;
+  if (o.fill){ ctx.fillStyle = o.fill; trace(pts, closed, amp * .4); ctx.fill(); }
+  if (o.hatch){ const b = bbox(pts); ctx.save(); trace(pts, closed, 0); ctx.clip(); hatch(b[0], b[1], b[2], b[3], o.hatch, o.gap || 9); ctx.restore(); }
+  if (o.stroke !== null){
+    ctx.strokeStyle = o.stroke || P.ink; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (o.dash) ctx.setLineDash(o.dash);
+    ctx.lineWidth = w; trace(pts, closed, amp); ctx.stroke();
+    const g = ctx.globalAlpha; ctx.globalAlpha = g * .45; ctx.lineWidth = w * .6; trace(pts, closed, amp * 1.8); ctx.stroke(); ctx.globalAlpha = g;
+    ctx.setLineDash([]);
+  }
+}
+function rrPts(x, y, w, h, r){
+  r = Math.max(2, Math.min(r, w / 2, h / 2)); const pts = [];
+  const cs = [[x + w - r, y + r, -Math.PI / 2], [x + w - r, y + h - r, 0], [x + r, y + h - r, Math.PI / 2], [x + r, y + r, Math.PI]];
+  for (const [cx, cy, a0] of cs) for (let i = 0; i <= 3; i++){ const a = a0 + i / 3 * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  return subdiv(pts, true, 55);
+}
+function ellPts(cx, cy, rx, ry, n){ n = n || Math.max(12, Math.min(32, Math.round((rx + ry) * .35))); const p = []; for (let i = 0; i < n; i++){ const a = i / n * TAU; p.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]); } return p; }
+const rect = (x, y, w, h, o = {}) => shape(rrPts(x, y, w, h, o.r ?? 8), o);
+const circ = (cx, cy, r, o = {}) => shape(ellPts(cx, cy, r, o.ry ?? r), o);
+const poly = (pts, o = {}) => shape(subdiv(pts, false, o.seg || 40), { ...o, closed:false });
+function line(x1, y1, x2, y2, c = P.ink, w = 2.2){
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1, nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+  ctx.strokeStyle = c; ctx.lineCap = 'round'; const g = ctx.globalAlpha;
+  for (let p = 0; p < 2; p++){
+    ctx.lineWidth = p ? w * .55 : w; ctx.globalAlpha = p ? g * .5 : g;
+    const bow = J(1) * Math.min(3, len * .03), ax = x1 + J(1), ay = y1 + J(1), bx = x2 + J(1), by = y2 + J(1);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2 + nx * bow, (ay + by) / 2 + ny * bow, bx, by); ctx.stroke();
+  }
+  ctx.globalAlpha = g;
+}
+function arrow(x1, y1, x2, y2, c = P.ink, w = 2.2, p = 1, dash){
+  if (p <= 0) return; const ex = lerp(x1, x2, p), ey = lerp(y1, y2, p);
+  poly([[x1, y1], [ex, ey]], { stroke:c, w, dash, amp:.8 });
+  const a = Math.atan2(ey - y1, ex - x1), L = 12;
+  line(ex, ey, ex - Math.cos(a - .45) * L, ey - Math.sin(a - .45) * L, c, w);
+  line(ex, ey, ex - Math.cos(a + .45) * L, ey - Math.sin(a + .45) * L, c, w);
+}
+function txt(s, x, y, size = 20, c = P.ink, align = 'center', bold = false, font = FONT){
+  ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; ctx.fillStyle = c; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+function txtW(s, size, bold = false, font = FONT){ ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; return ctx.measureText(s).width; }
+function bubble(x, y, s, tx, ty, size = 18){
+  const w = txtW(s, size, true) + 30, h = size + 20;
+  rect(x - w / 2, y - h / 2, w, h, { fill:'#fff', r:h / 2, w:2 });
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x - 10, y + h / 2 - 4); ctx.lineTo(tx, ty); ctx.lineTo(x + 10, y + h / 2 - 4); ctx.fill();
+  line(x - 10, y + h / 2 - 1, tx, ty, P.ink, 2); line(x + 10, y + h / 2 - 1, tx, ty, P.ink, 2);
+  txt(s, x, y + 1, size, P.ink, 'center', true);
+}
+function star(cx, cy, r1, r2, n, rot, o){ const p = []; for (let i = 0; i < n * 2; i++){ const a = rot + i / (n * 2) * TAU - Math.PI / 2, r = i % 2 ? r2 : r1; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } shape(p, { amp:.6, ...o }); }
+function sparkle(x, y, s, rot = 0){ star(x, y, 12 * s, 3.5 * s, 4, rot, { fill:P.yellow, w:1.6 }); }
+function gear(cx, cy, r, teeth, rot, fill){
+  const p = [], n = teeth * 4;
+  for (let i = 0; i < n; i++){ const a = rot + i / n * TAU, rr = (i % 4 < 2) ? r : r * .78; p.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+  shape(p, { fill, w:2, amp:.5 }); circ(cx, cy, r * .3, { fill:'#fff', w:1.8 });
+}
+function check(x, y, s = 1){ circ(x, y, 11 * s, { fill:P.green, w:1.8 }); poly([[x - 5 * s, y], [x - 1 * s, y + 4 * s], [x + 6 * s, y - 5 * s]], { w:2.6 * s, amp:.3 }); }
+function lock(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(-10, -10); ctx.arc(0, -10, 10, Math.PI, 0); ctx.lineTo(10, 0); ctx.stroke();
+  rect(-17, -3, 34, 27, { fill:P.yellow, r:6 }); circ(0, 8, 3.5, { fill:P.ink, w:1 }); ctx.restore();
+}
+function leaf(x, y, ang, sz){
+  if (sz < .6) return; ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  shape(ellPts(sz * 1.2, 0, sz * 1.2, sz * .55, 10), { fill:P.green, stroke:P.greenD, w:1.5, amp:.35 });
+  ctx.restore();
+}
+
+/* ---------- Robo: the cute red square robot ---------- */
+function robot(x, y, s, o = {}){
+  const t = o.t || 0, aL = o.aL ?? .25, aR = o.aR ?? .25, lk = o.look || [0, 0], mood = o.mood || 'happy';
+  const bob = o.bounce ? -Math.abs(Math.sin(t * o.bounce)) * 9 : Math.sin(t * 3) * 1.5;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(74,68,83,.13)'; ctx.beginPath(); ctx.ellipse(0, 2, 48, 7, 0, 0, TAU); ctx.fill();
+  const sw = o.walk ? Math.sin(t * 14) : 0;
+  rect(-28, -24 - Math.max(0, sw) * 6, 16, 24, { fill:P.redD, r:5, w:2 });
+  rect(12, -24 - Math.max(0, -sw) * 6, 16, 24, { fill:P.redD, r:5, w:2 });
+  ctx.translate(0, bob);
+  // antenna with glowing tip
+  poly([[0, -104], [4, -113], [-4, -121], [0, -129]], { w:2.6, amp:.4, seg:100 });
+  const glow = .5 + .5 * Math.sin(t * 5);
+  ctx.fillStyle = `rgba(255,222,110,${.22 + .3 * glow})`; ctx.beginPath(); ctx.arc(0, -135, 14 + glow * 5, 0, TAU); ctx.fill();
+  circ(0, -135, 7.5, { fill:P.yellow, w:2 });
+  // body
+  rect(-46, -104, 92, 84, { fill:mood === 'x' ? '#d9b3ae' : P.red, r:18, w:2.6 });
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-39, -58); ctx.quadraticCurveTo(-40, -90, -28, -96); ctx.stroke();
+  // face screen
+  rect(-31, -93, 62, 44, { fill:'#fff4ef', r:11, w:2 });
+  const blink = (t % 3.3) < .13;
+  for (const ex of [-13, 13]){
+    const cx = ex + lk[0] * 3, cy = -74 + lk[1] * 2;
+    if (mood === 'x'){ line(cx - 5, cy - 5, cx + 5, cy + 5, P.ink, 2.4); line(cx - 5, cy + 5, cx + 5, cy - 5, P.ink, 2.4); }
+    else if (blink){ line(cx - 5, cy, cx + 5, cy, P.ink, 2.6); }
+    else { ctx.fillStyle = P.ink; ctx.beginPath(); ctx.ellipse(cx, cy, 4.6, mood === 'wow' ? 6.8 : 5.6, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + 1.6, cy - 2.2, 1.7, 0, TAU); ctx.fill(); }
+  }
+  ctx.fillStyle = 'rgba(247,150,165,.7)';
+  ctx.beginPath(); ctx.ellipse(-22, -61, 5.5, 3.2, 0, 0, TAU); ctx.ellipse(22, -61, 5.5, 3.2, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 2.3; ctx.beginPath();
+  const mx = lk[0] * 3;
+  if (mood === 'wow') ctx.ellipse(mx, -59, 3.6, 4.6, 0, 0, TAU);
+  else if (mood === 'sad' || mood === 'x') ctx.arc(mx, -53, 6, Math.PI * 1.15, Math.PI * 1.85);
+  else ctx.arc(mx, -64, 6.5, Math.PI * .15, Math.PI * .85);
+  ctx.stroke();
+  circ(-15, -35, 4.2, { fill:P.yellow, w:1.6 }); circ(0, -35, 4.2, { fill:P.mint, w:1.6 }); circ(15, -35, 4.2, { fill:P.blue, w:1.6 });
+  // noodle arms
+  const L = 34, sL = [-45, -62], sR = [45, -62];
+  const hL = [sL[0] - Math.sin(aL) * L, sL[1] + Math.cos(aL) * L], hR = [sR[0] + Math.sin(aR) * L, sR[1] + Math.cos(aR) * L];
+  for (const [s0, h, d] of [[sL, hL, -1], [sR, hR, 1]]){
+    poly([s0, [(s0[0] + h[0]) / 2 + d * 3, (s0[1] + h[1]) / 2 + 5], h], { w:3.4, amp:.4, seg:100 });
+    circ(h[0], h[1], 7.5, { fill:P.redD, w:2 });
+  }
+  ctx.restore();
+  const k = p => [x + p[0] * s, y + (p[1] + bob) * s];
+  return { hL:k(hL), hR:k(hR) };
+}
+
+/* ---------- frame chrome: paper, stage label, caption, progress ---------- */
+function paper(){
+  ctx.fillStyle = P.paper; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(150,185,215,.15)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let y = 100; y < H; y += 32){ ctx.moveTo(0, y); ctx.lineTo(W, y); } ctx.stroke();
+  const s0 = seed; seed = 4242; ctx.fillStyle = 'rgba(120,100,80,.08)';
+  for (let i = 0; i < 280; i++) ctx.fillRect(R() * W, R() * H, 1 + R() * 1.6, 1 + R() * 1.6);
+  seed = s0;
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * .35, W / 2, H / 2, H * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(130,95,60,.10)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function header(i, title, lt){
+  const p = back(seg(lt, 0, .45));
+  ctx.save(); ctx.translate(48, 50); ctx.scale(p || .001, p || .001);
+  circ(0, 0, 24, { fill:SCOL[i], w:2.4 }); txt(String(i + 1), 0, 1, 24, P.ink, 'center', true);
+  ctx.restore();
+  txt(title, 86, 48, 30, P.ink, 'left', true);
+  const w = txtW(title, 30, true), u = eOut(seg(lt, .15, .8)), pts = [];
+  for (let k = 0; k <= 30; k++) pts.push([86 + w * u * k / 30, 72 + Math.sin(k * 1.4) * 2.2]);
+  if (u > .01) poly(pts, { stroke:SCOL[i], w:4.5, amp:.4, seg:100 });
+  txt(`scene ${i + 1} of ${NS}`, W - 44, 50, 16, P.inkSoft, 'right');
+}
+function caption(s, lt){
+  withA(seg(lt, .2, .6), () => {
+    const w = txtW(s, 19) + 44;
+    rect(W / 2 - w / 2, 626, w, 42, { fill:'rgba(255,255,255,.78)', r:21, w:1.8 });
+    txt(s, W / 2, 647, 19, P.ink);
+  });
+}
+function progress(T){
+  const x0 = 44, x1 = W - 170, y = 696, sw = (x1 - x0) / NS;
+  for (let k = 0; k < NS; k++){
+    const a = x0 + k * sw + 3, b = x0 + (k + 1) * sw - 3, f = clamp((T - k * SCENE) / SCENE);
+    ctx.fillStyle = 'rgba(74,68,83,.1)'; ctx.beginPath(); ctx.roundRect(a, y - 4, b - a, 8, 4); ctx.fill();
+    if (f > 0){ ctx.fillStyle = SCOL[k]; ctx.beginPath(); ctx.roundRect(a, y - 4, Math.max(8, (b - a) * f), 8, 4); ctx.fill(); }
+  }
+  txt(ended ? 'click to replay' : `${T.toFixed(1)}s / 40s`, W - 44, y, 15, P.inkSoft, 'right');
+  if (!playing && !ended){ ctx.fillStyle = 'rgba(74,68,83,.55)'; ctx.fillRect(W - 60, 16, 6, 20); ctx.fillRect(W - 50, 16, 6, 20); }
+}
+
+/* =====================================================================
+   SCENES — each is 5 s long and receives local time lt ∈ [0,5]
+   All names, files and numbers shown inside the "sample" app are made up.
+   ===================================================================== */
+
+/* ---------- extra building blocks ---------- */
+const hash = n => { n = Math.imul(n ^ (n >>> 15), 2246822507); n = Math.imul(n ^ (n >>> 13), 3266489909); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+const typed = (s, lt, a, b) => s.slice(0, Math.floor(seg(lt, a, b) * s.length + .0001));
+const bz = (p0, c1, c2, p3, u) => { const m = 1 - u; return [m*m*m*p0[0] + 3*m*m*u*c1[0] + 3*m*u*u*c2[0] + u*u*u*p3[0], m*m*m*p0[1] + 3*m*m*u*c1[1] + 3*m*u*u*c2[1] + u*u*u*p3[1]]; };
+function pill(x, y, s, fill, size = 17, c = P.ink){
+  const w = txtW(s, size, true) + 28, h = size + 14;
+  rect(x - w / 2, y - h / 2, w, h, { fill, r:h / 2, w:1.8 }); txt(s, x, y + 1, size, c, 'center', true); return w;
+}
+function win(x, y, w, h, title, fill = '#fff'){
+  rect(x, y, w, h, { fill, r:14, w:2.4 });
+  rect(x, y, w, 36, { fill:P.gray, r:14, w:2.4 });
+  ctx.fillStyle = P.gray; ctx.fillRect(x + 3, y + 22, w - 6, 12);
+  line(x + 4, y + 36, x + w - 4, y + 36, P.ink, 2);
+  circ(x + 22, y + 18, 5.5, { fill:P.red, w:1.4 }); circ(x + 40, y + 18, 5.5, { fill:P.yellow, w:1.4 }); circ(x + 58, y + 18, 5.5, { fill:P.green, w:1.4 });
+  txt(title, x + w / 2 + 20, y + 19, 16, P.inkSoft, 'center', true);
+}
+function magnifier(x, y, r){
+  line(x + r * .72, y + r * .72, x + r * 1.75, y + r * 1.75, P.ink, 10);
+  line(x + r * .72, y + r * .72, x + r * 1.75, y + r * 1.75, P.orange, 5.5);
+  circ(x, y, r, { fill:'rgba(205,235,255,.5)', w:3.6 });
+  ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(x, y, r * .7, Math.PI * 1.08, Math.PI * 1.42); ctx.stroke();
+}
+function toolbox(x, y, s, rot = 0){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  poly([[-38, -8], [-38, -34], [38, -34], [38, -8]], { w:6, amp:.5, stroke:P.ink });
+  rect(-92, -10, 184, 102, { fill:P.orange, r:14, w:2.8, hatch:'#e8a36a' });
+  rect(-92, -10, 184, 28, { fill:P.red, r:12, w:2.6 });
+  circ(0, 18, 8, { fill:P.yellow, w:2 });
+  txt('REA', 0, 58, 42, P.ink, 'center', true);
+  ctx.restore();
+}
+function crate(x, y, s, a = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  withA(a, () => {
+    rect(-120, -90, 240, 180, { fill:P.orangeL, r:10, w:2.8, hatch:P.orange, gap:12 });
+    line(-118, -30, 118, -30, P.orange, 2); line(-118, 30, 118, 30, P.orange, 2);
+    rect(-20, -92, 40, 184, { fill:P.yellow, r:4, w:2 });
+    ctx.save(); ctx.rotate(-.08); rect(-108, 36, 128, 34, { fill:'#fff', r:6, w:1.8 }); txt('compiled app', -44, 54, 17, P.ink, 'center', true); ctx.restore();
+  });
+  ctx.restore();
+}
+function envelope(x, y, fill, rot = 0){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  rect(-24, -16, 48, 32, { fill, r:6, w:2.2 }); poly([[-23, -14], [0, 3], [23, -14]], { w:2, amp:.4 });
+  ctx.restore();
+}
+const hexByte = n => Math.floor(hash(n) * 256).toString(16).toUpperCase().padStart(2, '0');
+
+/* 1 · see a feature you like ------------------------------------------ */
+function s1(lt, T){
+  const pop = back(seg(lt, 0, .5));
+  ctx.save(); ctx.translate(370, 330); ctx.scale(pop || .001, pop || .001); ctx.translate(-260, -190);
+  win(0, 0, 520, 380, 'Notes  (sample app)');
+  rect(24, 58, 472, 44, { fill:P.blueL, r:22, w:2 });
+  circ(54, 80, 9, { w:2.2 }); line(61, 87, 69, 95, P.ink, 2.6);
+  const q = 'robot', s = typed(q, lt, .7, 1.7);
+  txt(s + (Math.floor(T * 2.5) % 2 && s.length < q.length ? '|' : ''), 86, 81, 22, P.ink, 'left', true, MONO);
+  const rows = [['Robot party ideas', P.pink, 1], ['Buy batteries', P.mint, 0], ['Robo repair list', P.yellow, 1], ['Dentist at 3pm', P.purple, 0], ['Pasta recipe', P.orange, 0]];
+  const f = seg(lt, 1.5, 2.3);
+  let slot = 0;
+  rows.forEach((r, i) => {
+    const y = 122 + i * 48, ny = 122 + slot * 48;
+    const yy = r[2] ? lerp(y, ny, eIO(f)) : y;
+    withA(r[2] ? 1 : 1 - f, () => {
+      rect(24, yy, 472, 38, { fill:r[2] && f > .5 ? P.yellowL : '#fff', r:10, w:1.8 });
+      circ(48, yy + 19, 9, { fill:r[1], w:1.6 });
+      txt(r[0], 70, yy + 20, 19, P.ink, 'left', r[2] && f > .5);
+    });
+    if (r[2]) slot++;
+  });
+  ctx.restore();
+  const wow = lt > .9;
+  const rb = robot(960, 560, 1.3, { t:T, look:[-1, -.2], mood:wow ? 'wow' : 'happy', aR:wow ? 2.3 + Math.sin(T * 6) * .2 : .25, bounce:lt > 1.5 && lt < 3.2 ? 5 : 0 });
+  withA(seg(lt, 1.3, 1.7) * (1 - seg(lt, 3.1, 3.3)), () => bubble(930, 290, 'I want that search in my app!', rb.hL[0] + 30, rb.hL[1] - 120, 21));
+  withA(seg(lt, 3.4, 3.8), () => { bubble(930, 290, '…but how does it actually work?', 965, 390, 21); });
+  if (lt > 1.9 && lt < 3.2) sparkle(640 + 12 * Math.sin(T * 5), 250, 1.1, T * 2);
+}
+
+/* 2 · the code is sealed ---------------------------------------------- */
+function s2(lt, T){
+  for (let i = 0; i < 40; i++){
+    const x = 430 + hash(i) * 790, sp = 22 + hash(i + 7) * 38, y = 135 + ((hash(i + 99) * 470 - lt * sp) % 470 + 470) % 470;
+    const hx = hash(i + 300) > .5;
+    withA(.5, () => txt(hx ? hexByte(i * 7 + Math.floor(lt * 2)) : (hash(i * 13 + Math.floor(lt * 3)) > .5 ? '1' : '0'), x, y, hx ? 17 : 21, P.inkSoft, 'center', false, MONO));
+  }
+  const drop = back(seg(lt, .2, 1.0)), cy = lerp(-120, 350, clamp(drop));
+  crate(760, cy, 1.35);
+  const wig = lt > 3 ? Math.sin(T * 22) * .06 * seg(lt, 3, 3.2) * (1 - seg(lt, 4.2, 4.5)) : 0;
+  ctx.save(); ctx.translate(760, cy); ctx.rotate(wig); lock(0, -4, 2.2); ctx.restore();
+  withA(seg(lt, 1.6, 2.1), () => {
+    ctx.save(); ctx.translate(990, 175); ctx.rotate(.05);
+    rect(-120, -34, 240, 68, { fill:P.yellowL, r:12, w:2.2 });
+    txt('No source code', 0, -9, 21, P.ink, 'center', true); txt('inside. Just bytes.', 0, 15, 21, P.ink, 'center', true);
+    ctx.restore();
+    arrow(900, 205, 850, 260, P.ink, 2.4, seg(lt, 1.8, 2.3));
+  });
+  const rb = robot(230, 560, 1.3, { t:T, look:[1, -.3], mood:lt > 1.4 ? 'sad' : 'happy', aL:lt > 1.4 ? 2.5 + Math.sin(T * 8) * .15 : .25, aR:.25 });
+  withA(seg(lt, 2.5, 2.9), () => bubble(240, 330, "I can't read this!", 235, 405, 21));
+}
+
+/* 3 · meet REA --------------------------------------------------------- */
+function s3(lt, T){
+  const tp = back(seg(lt, 0, .5));
+  ctx.save(); ctx.translate(80, 140); ctx.scale(tp || .001, tp || .001);
+  rect(0, 0, 560, 150, { fill:'#4a4453', r:14, w:2.6 });
+  ctx.fillStyle = '#4a4453';
+  circ(24, 22, 5, { fill:P.red, w:1 }); circ(42, 22, 5, { fill:P.yellow, w:1 }); circ(60, 22, 5, { fill:P.green, w:1 });
+  const cmd = typed('npx rea-agents setup', lt, .5, 1.9);
+  txt('$ ' + cmd + (Math.floor(T * 2.5) % 2 && lt < 2.1 ? '▌' : ''), 24, 66, 24, P.mint, 'left', true, MONO);
+  withA(seg(lt, 2.1, 2.4), () => { check(34, 100, .8); txt('REA added to your AI agent', 56, 101, 19, P.yellowL, 'left', false, MONO); });
+  withA(seg(lt, 2.6, 2.9), () => { check(34, 128, .8); txt('workflow instructions installed', 56, 129, 19, P.yellowL, 'left', false, MONO); });
+  ctx.restore();
+  const tb = back(seg(lt, 1.6, 2.3));
+  if (tb > 0){
+    toolbox(940, 450, 1.5 * tb, Math.sin(T * 4) * .02);
+    withA(seg(lt, 2.2, 2.6), () => { txt('REA = Reverse Engineer Anything', 930, 175, 27, P.ink, 'center', true); poly([[700, 196], [820, 200], [940, 195], [1160, 199]], { stroke:P.yellow, w:5, amp:.5, seg:80 }); });
+    const tools = [['magnifier', 800, 330], ['gear', 940, 305], ['label', 1080, 330]];
+    tools.forEach((tl, i) => {
+      const u = back(seg(lt, 3.0 + i * .25, 3.5 + i * .25)); if (u <= 0) return;
+      ctx.save(); ctx.translate(tl[1], tl[2] + Math.sin(T * 3 + i) * 3); ctx.scale(u, u);
+      if (tl[0] === 'magnifier') magnifier(-8, -6, 20);
+      else if (tl[0] === 'gear') gear(0, 0, 26, 8, T * .8, P.mint);
+      else { rect(-30, -22, 60, 44, { fill:P.purpleL, r:8, w:2 }); txt('{ }', 0, 1, 26, P.ink, 'center', true, MONO); }
+      ctx.restore();
+    });
+  }
+  const rb = robot(230, 560, 1.25, { t:T, look:[1, 0], aR:lt > 3 ? .9 : .25 });
+  withA(seg(lt, .6, 1), () => pill(230, 372, 'your AI agent', P.blueL, 19));
+  const u = seg(lt, 3.0, 4.0);
+  if (u > 0){
+    const p0 = rb.hR, p3 = [848, 478], c1 = [p0[0] + 140, p0[1] + 80], c2 = [p3[0] - 160, p3[1] + 90], pts = [];
+    for (let k = 0; k <= 24; k++) if (k / 24 <= eOut(u)) pts.push(bz(p0, c1, c2, p3, k / 24));
+    if (pts.length > 1){ poly(pts, { stroke:P.ink, w:7, amp:.5, seg:70 }); poly(pts, { stroke:P.blue, w:3.5, amp:.5, seg:70 }); }
+    withA(seg(lt, 3.8, 4.2), () => {
+      circ(p3[0], p3[1], 11, { fill:P.yellow, w:2.4 });
+      const m = bz(p0, c1, c2, p3, .5); pill(m[0] - 10, m[1] - 70, 'MCP = a plug that gives your AI new tools', P.yellowL, 17);
+    });
+  }
+}
+
+/* 4 · just ask ---------------------------------------------------------- */
+function s4(lt, T){
+  win(50, 125, 560, 400, 'Chat with your AI');
+  const L = ['Understand how search works', 'in the Notes app. Show me', 'the evidence.'], total = L.join('').length, n = Math.floor(seg(lt, .4, 2.0) * total + .0001);
+  rect(150, 172, 440, 118, { fill:P.blueL, r:20, w:2.2 });
+  let c = 0;
+  L.forEach((ln, i) => { const k = clamp(n - c, 0, ln.length); c += ln.length; txt(ln.slice(0, k), 170, 203 + i * 32, 22, P.ink, 'left', true); });
+  withA(seg(lt, 2.2, 2.5), () => { rect(70, 330, 330, 66, { fill:P.pinkL, r:20, w:2.2 }); txt(lt < 4.3 ? 'On it! Asking REA to look…' : 'Found it! Here is the evidence.', 90, 363, 21, P.ink, 'left', true); });
+  const happy = lt > 4.3;
+  const rb = robot(760, 560, 1.15, { t:T, look:[1, 0], mood:happy ? 'wow' : 'happy', aR:lt > 2.2 && lt < 3.3 ? 1.5 : .25, bounce:happy ? 6 : 0 });
+  const tx = 1060, ty = 500, shake = lt > 3.1 && lt < 3.9 ? Math.sin(T * 30) * .05 : 0;
+  toolbox(tx, ty, 1.15, shake);
+  if (lt > 3.1 && lt < 3.9) gear(tx, ty - 70, 24, 8, T * 5, P.mint);
+  const a = [rb.hR[0] + 10, rb.hR[1] - 10], b = [tx - 20, ty - 60], mid = [(a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 150];
+  const q1 = seg(lt, 2.3, 3.1), q2 = seg(lt, 3.9, 4.6);
+  if (q1 > 0 && q1 < 1){ const p = bz(a, mid, mid, b, eIO(q1)); envelope(p[0], p[1], P.blue, Math.sin(T * 9) * .15); }
+  if (q1 > .1 && q1 < 1) withA(.9, () => pill(mid[0], mid[1] - 20, 'look inside Notes', P.blueL, 16));
+  if (q2 > 0 && q2 < 1){ const p = bz(b, mid, mid, a, eIO(q2)); envelope(p[0], p[1], P.green, Math.sin(T * 9) * .15); }
+  if (q2 > .1 && q2 < 1) withA(.9, () => pill(mid[0], mid[1] - 20, 'findings + evidence', P.greenL, 16));
+  if (happy) sparkle(800, 380, 1.2, T * 2);
+}
+
+/* 5 · REA looks inside --------------------------------------------------- */
+function s5(lt, T){
+  const open = eIO(seg(lt, .3, 1.2));
+  crate(250, 360, 1.15, 1 - open * .75);
+  if (open > .01) withA(open, () => rect(110, 255, 280, 210, { fill:'rgba(227,242,252,.7)', r:12, w:2.4, dash:[10, 8] }));
+  const mx = 250 + Math.sin(T * 1.6) * 40, my = 350 + Math.cos(T * 1.3) * 22;
+  magnifier(mx, my, 54);
+  const cards = [
+    ['Modules', 'the parts it is built from', P.blue],
+    ['Imports', 'code it borrows from others', P.mint],
+    ['Strings', 'words hidden inside', P.yellow],
+    ['Calls', 'who talks to who', P.pink],
+  ];
+  cards.forEach((cd, i) => {
+    const u = back(seg(lt, 1.2 + i * .5, 1.7 + i * .5)); if (u <= 0) return;
+    const y = 190 + i * 98;
+    ctx.save(); ctx.translate(590, y); ctx.scale(u, u);
+    rect(-170, -38, 340, 78, { fill:cd[2], r:14, w:2.4 });
+    txt(cd[0], -150, -14, 26, P.ink, 'left', true); txt(cd[1], -150, 16, 18, P.ink, 'left');
+    ctx.restore();
+    arrow(400, 340, 412 + 0, y, P.inkSoft, 2, seg(lt, 1.2 + i * .5, 1.5 + i * .5), [6, 6]);
+  });
+  withA(seg(lt, 3.1, 3.5), () => txt('REA can open up:', 1090, 170, 24, P.ink, 'center', true));
+  ['Native apps', 'JavaScript / Electron', 'Websites', 'Android apps', '.NET programs', 'Firmware'].forEach((s, i) => {
+    const u = back(seg(lt, 3.3 + i * .22, 3.7 + i * .22)); if (u <= 0) return;
+    ctx.save(); ctx.translate(1090, 225 + i * 56); ctx.scale(u, u); pill(0, 0, s, SCOL[(i + 2) % 10], 19); ctx.restore();
+  });
+}
+
+/* 6 · trace the feature --------------------------------------------------- */
+function s6(lt, T){
+  const N = [['Search box', 'you type "robot"'], ['Typing handler', 'wakes on each key'], ['Index lookup', 'finds matching notes'], ['Rank matches', 'best ones first'], ['Result list', 'what you see']];
+  const xs = [150, 375, 600, 825, 1050], y = 320, tm = i => .5 + i * .85;
+  withA(seg(lt, .1, .5), () => pill(640, 160, 'SAMPLE TRACE · names are made up for illustration', P.yellowL, 16));
+  for (let i = 0; i < 4; i++) arrow(xs[i] + 78, y, xs[i + 1] - 78, y, P.ink, 2.6, seg(lt, tm(i) + .15, tm(i) + .6));
+  N.forEach((n, i) => {
+    const lit = seg(lt, tm(i) - .2, tm(i) + .1), u = back(seg(lt, i * .12, .4 + i * .12));
+    ctx.save(); ctx.translate(xs[i], y); ctx.scale(u || .001, u || .001);
+    if (lit > 0){ ctx.fillStyle = `rgba(251,227,154,${.5 * lit})`; ctx.beginPath(); ctx.arc(0, 0, 100 + 6 * Math.sin(T * 6), 0, TAU); ctx.fill(); }
+    rect(-78, -50, 156, 100, { fill:lit > .5 ? P.yellow : '#fff', r:14, w:2.6 });
+    txt(n[0], 0, -18, 21, P.ink, 'center', true); txt(n[1], 0, 14, 15, P.inkSoft, 'center');
+    ctx.fillStyle = 'rgba(74,68,83,.16)';
+    for (let k = 0; k < 2; k++) ctx.fillRect(-58, 28 + k * 9, 70 - k * 22, 4);
+    ctx.restore();
+    withA(seg(lt, tm(i) + .1, tm(i) + .4), () => { pill(xs[i], y + 98, `evidence #${i + 1}`, P.greenL, 15); });
+  });
+  const d = clamp((lt - .5) / (4 * .85));
+  if (d > 0 && d < 1){ const idx = Math.min(3, Math.floor(d * 4)), f = d * 4 - idx; const px = lerp(xs[idx] + 78, xs[idx + 1] - 78, eIO(f)); circ(px, y, 9, { fill:P.red, w:2 }); }
+  const rb = robot(150, 585, .9, { t:T, look:[1, -.2], mood:lt > 4.1 ? 'wow' : 'happy', aR:1.2 });
+  withA(seg(lt, 4.0, 4.4), () => bubble(570, 512, 'Found the path from keystroke to results!', 195, 548, 20));
+}
+
+/* 7 · evidence, and honest gaps ------------------------------------------ */
+function s7(lt, T){
+  const pop = back(seg(lt, 0, .5));
+  ctx.save(); ctx.translate(620, 365); ctx.scale(pop || .001, pop || .001); ctx.translate(-340, -240);
+  rect(0, 0, 680, 480, { fill:'#fff', r:16, w:2.6 });
+  rect(250, -14, 180, 34, { fill:P.grayD, r:10, w:2.2 });
+  txt('REPORT  (sample)', 340, 44, 24, P.ink, 'center', true);
+  line(30, 68, 650, 68, P.ink, 2);
+  const rows = [['Search runs on every keystroke', '3 references', 1], ['Looks words up in a ready-made index', '2 references', 1], ['Sorts the matches best-first', '1 reference', 1], ['How "best" is scored', 'UNKNOWN: could not see it', 0]];
+  rows.forEach((r, i) => {
+    const t0 = .8 + i * .7, u = seg(lt, t0, t0 + .35), y = 118 + i * 88;
+    withA(u, () => {
+      if (r[2]) check(52, y, 1.3); else { circ(52, y, 15, { fill:P.orange, w:2 }); txt('?', 52, y + 1, 22, P.ink, 'center', true); }
+      txt(r[0], 86, y - 8, 24, P.ink, 'left', true);
+      pill(86 + (txtW(r[1], 15, true) + 28) / 2, y + 26, r[1], r[2] ? P.greenL : P.orangeL, 15);
+    });
+  });
+  ctx.restore();
+  withA(seg(lt, 3.6, 4.0), () => {
+    ctx.save(); ctx.translate(1110, 250); ctx.rotate(-.12);
+    rect(-120, -48, 240, 96, { fill:P.mintL, r:16, w:3, dash:[10, 6] });
+    lock(-78, -6, .9); txt('Runs on', 20, -14, 22, P.ink, 'center', true); txt('your computer', 20, 14, 22, P.ink, 'center', true);
+    ctx.restore();
+  });
+  withA(seg(lt, 3.0, 3.4), () => { txt('Honest about gaps', 1110, 470, 22, P.ink, 'center', true); arrow(1005, 482, 720, 507, P.ink, 2.4, seg(lt, 3.1, 3.7)); });
+  robot(130, 570, 1.1, { t:T, look:[1, -.1], aR:.9 });
+}
+
+/* 8 · build your own ------------------------------------------------------- */
+function s8(lt, T){
+  const rb = robot(200, 560, 1.25, { t:T, look:[1, -.2], mood:lt > 2.4 ? 'wow' : 'happy', aL:lt < 2.4 ? 1.3 + Math.sin(T * 8) * .2 : .25, aR:lt < 2.4 ? .9 : 2.3, bounce:lt > 2.4 ? 5 : 0 });
+  const pop = back(seg(lt, .1, .6));
+  ctx.save(); ctx.translate(560, 290); ctx.scale(pop || .001, pop || .001); ctx.translate(-220, -140);
+  win(0, 0, 440, 280, 'My project');
+  [[56, 'search bar', 0.5], [118, 'result row', 1.2], [166, 'result row', 1.6], [214, 'result row', 2.0]].forEach((b, i) => {
+    const u = back(seg(lt, b[2], b[2] + .4)); if (u <= 0) return;
+    ctx.save(); ctx.translate(220, b[0] + 20 - (1 - u) * 60); ctx.globalAlpha *= clamp(u);
+    rect(-196, -20, 392, i ? 38 : 44, { fill:i ? P.yellowL : P.blueL, r:i ? 10 : 22, w:2 });
+    if (!i) txt('robot', -140, 2, 20, P.ink, 'left', true, MONO); else { ctx.fillStyle = 'rgba(74,68,83,.22)'; ctx.fillRect(-148, -5, 150 + i * 30, 9); }
+    if (!i) { circ(-166, 2, 8, { w:2 }); line(-160, 8, -153, 15, P.ink, 2.4); } else circ(-170, 0, 8, { fill:SCOL[i + 1], w:1.5 });
+    ctx.restore();
+  });
+  ctx.restore();
+  if (lt > 2.4){ sparkle(790, 190, 1.1, T * 2); sparkle(330, 330, .9, -T * 2); withA(seg(lt, 2.4, 2.8), () => { check(780, 440, 1.4); txt('works!', 830, 441, 22, P.ink, 'left', true); }); }
+  withA(seg(lt, 2.9, 3.3), () => {
+    ctx.save(); ctx.translate(1050, 215); ctx.rotate(.03);
+    rect(-170, -75, 340, 150, { fill:P.purpleL, r:16, w:2.4 });
+    txt("From REA's own showcase:", 0, -48, 17, P.inkSoft, 'center', true);
+    txt('DX-Ball sound pan, rebuilt:', 0, -16, 20, P.ink, 'center', true);
+    txt('3,205 test cases matched', 0, 18, 23, P.ink, 'center', true);
+    txt('the original game', 0, 48, 17, P.inkSoft, 'center');
+    ctx.restore();
+  });
+  const bn = back(seg(lt, 3.5, 4.1));
+  if (bn > 0){
+    ctx.save(); ctx.translate(690, 530); ctx.scale(bn, bn);
+    rect(-340, -60, 680, 120, { fill:P.yellow, r:22, w:3 });
+    txt('REA: Reverse Engineer Anything', 0, -22, 34, P.ink, 'center', true);
+    txt('npx rea-agents setup    ·    rea.tools', 0, 24, 26, P.ink, 'center', true, MONO);
+    ctx.restore();
+    for (let k = 0; k < 5; k++){ const a = k / 5 * TAU + T * .7; sparkle(690 + Math.cos(a) * 380, 530 + Math.sin(a) * 70, .6 + .2 * Math.sin(T * 4 + k), T * 2 + k); }
+  }
+}
+
+const SCENES = [
+  { title:'Spot a cool feature', d:s1, cap:'Robo spots a handy search feature in an app and wonders: how does it work?' },
+  { title:'The code is sealed', d:s2, cap:'Finished apps are compiled: no readable source code, just bytes that people cannot easily read.' },
+  { title:'Meet REA', d:s3, cap:'REA is a free toolbox for AI assistants. One command sets it up, and an MCP plug connects it.' },
+  { title:'Just ask your AI', d:s4, cap:'You ask in plain words. Your AI sends the job to REA and gets findings back.' },
+  { title:'REA looks inside', d:s5, cap:'REA opens the app up: its parts, borrowed code, hidden words and who calls who.' },
+  { title:'Trace the feature', d:s6, cap:'It follows the feature step by step, from a keystroke to the results on screen.' },
+  { title:'Evidence, and gaps', d:s7, cap:'Every finding comes with evidence, and REA says what it could not work out. It all runs locally.' },
+  { title:'Build your own', d:s8, cap:'Then your AI can build a similar feature for your project. Get REA at rea.tools.' },
+];
+
+/* ---------- render + playback ---------- */
+let T = 0, playing = true, ended = false, last = null;
+function render(t){
+  ctx.setTransform(K, 0, 0, K, 0, 0);
+  ctx.globalAlpha = 1; seed = (Math.floor(t * 8) + 1) * 7919;
+  paper();
+  const i = Math.min(NS - 1, Math.floor(t / SCENE)), lt = t - i * SCENE;
+  let a = Math.min(1, lt / .35); if (i < NS - 1) a = Math.min(a, (SCENE - lt) / .3);
+  a = clamp(a);
+  ctx.globalAlpha = a; SCENES[i].d(lt, t);
+  ctx.globalAlpha = a; header(i, SCENES[i].title, lt); caption(SCENES[i].cap, lt);
+  ctx.globalAlpha = 1; progress(t);
+}
+function resize(){
+  const dpr = Math.min(2, window.devicePixelRatio || 1), s = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+  cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr); K = cv.width / W;
+}
+function tick(now){
+  if (last === null) last = now;
+  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing){ T += dt; if (T >= DUR){ T = DUR; playing = false; ended = true; } }
+  render(T); requestAnimationFrame(tick);
+}
+function seek(t){ T = clamp(t, 0, DUR); ended = T >= DUR; if (ended) playing = false; }
+function toggle(){ if (ended){ seek(0); playing = true; } else playing = !playing; }
+cv.addEventListener('click', toggle);
+addEventListener('keydown', e => {
+  if (e.key === ' '){ e.preventDefault(); toggle(); }
+  else if (e.key === 'ArrowRight') seek(T + 2);
+  else if (e.key === 'ArrowLeft'){ seek(T - 2); ended = false; }
+  else if (e.key === 'r' || e.key === 'R'){ seek(0); playing = true; }
+  else if (/^[1-8]$/.test(e.key)){ seek((+e.key - 1) * SCENE); ended = false; playing = true; }
+});
+addEventListener('resize', () => { resize(); render(T); });
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ seek(qt); playing = false; ended = false; }
+window.renderAt = t => { seek(t); playing = false; ended = false; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
