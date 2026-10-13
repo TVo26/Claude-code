@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Champion Battle 6v6</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b14;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;image-rendering:pixelated;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="Pixel-art animation: two trainers, Kai and Orin, fight a full six-on-six creature battle in a waterfall cave. Original fictional creatures, simulated battle."></canvas>
+<script>
+'use strict';
+/* Pixel-art 6v6 champion battle (about 2.5 min), in the style of the "Pokemon Battlegrounds" videos.
+   ALL CREATURES, MOVES AND TRAINERS ARE ORIGINAL AND FICTIONAL. The battle is a real simulation
+   (type chart, base stats, damage formula, two trainer AIs) with a fixed seed, so it replays the same every time.
+   Everything is drawn in code into a 320x180 buffer and scaled up without smoothing.
+   Click / space = pause. ?t=60 opens paused at 60 s. */
+const BW = 320, BH = 180;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const buf = document.createElement('canvas'); buf.width = BW; buf.height = BH;
+const b = buf.getContext('2d');
+const clamp = (v, a = 0, z = 1) => Math.max(a, Math.min(z, v));
+const lerp = (a, z, t) => a + (z - a) * t;
+const seg = (t, a, z) => clamp((t - a) / (z - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eIO = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const R = Math.round;
+const hash = n => { n = Math.imul((n | 0) ^ 61 ^ ((n | 0) >>> 16), 9); n ^= n >>> 4; n = Math.imul(n, 0x27d4eb2d); n ^= n >>> 15; return (n >>> 0) / 4294967296; };
+function mulberry32(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+/* ---------- 5x7 bitmap font (copied from samples/pixel-map-voyage.html) ---------- */
+const G = {
+A:[' ### ','#   #','#   #','#####','#   #','#   #','#   #'], B:['#### ','#   #','#   #','#### ','#   #','#   #','#### '],
+C:[' ### ','#   #','#    ','#    ','#    ','#   #',' ### '], D:['#### ','#   #','#   #','#   #','#   #','#   #','#### '],
+E:['#####','#    ','#    ','#### ','#    ','#    ','#####'], F:['#####','#    ','#    ','#### ','#    ','#    ','#    '],
+G:[' ### ','#   #','#    ','# ###','#   #','#   #',' ####'], H:['#   #','#   #','#   #','#####','#   #','#   #','#   #'],
+I:[' ### ','  #  ','  #  ','  #  ','  #  ','  #  ',' ### '], J:['  ###','   # ','   # ','   # ','   # ','#  # ',' ##  '],
+K:['#   #','#  # ','# #  ','##   ','# #  ','#  # ','#   #'], L:['#    ','#    ','#    ','#    ','#    ','#    ','#####'],
+M:['#   #','## ##','# # #','# # #','#   #','#   #','#   #'], N:['#   #','##  #','# # #','#  ##','#   #','#   #','#   #'],
+O:[' ### ','#   #','#   #','#   #','#   #','#   #',' ### '], P:['#### ','#   #','#   #','#### ','#    ','#    ','#    '],
+Q:[' ### ','#   #','#   #','#   #','# # #','#  # ',' ## #'], R:['#### ','#   #','#   #','#### ','# #  ','#  # ','#   #'],
+S:[' ####','#    ','#    ',' ### ','    #','    #','#### '], T:['#####','  #  ','  #  ','  #  ','  #  ','  #  ','  #  '],
+U:['#   #','#   #','#   #','#   #','#   #','#   #',' ### '], V:['#   #','#   #','#   #','#   #','#   #',' # # ','  #  '],
+W:['#   #','#   #','#   #','# # #','# # #','## ##','#   #'], X:['#   #','#   #',' # # ','  #  ',' # # ','#   #','#   #'],
+Y:['#   #','#   #',' # # ','  #  ','  #  ','  #  ','  #  '], Z:['#####','    #','   # ','  #  ',' #   ','#    ','#####'],
+0:[' ### ','#   #','#  ##','# # #','##  #','#   #',' ### '], 1:['  #  ',' ##  ','  #  ','  #  ','  #  ','  #  ',' ### '],
+2:[' ### ','#   #','    #','   # ','  #  ',' #   ','#####'], 3:['#####','   # ','  #  ','   # ','    #','#   #',' ### '],
+4:['   # ','  ## ',' # # ','#  # ','#####','   # ','   # '], 5:['#####','#    ','#### ','    #','    #','#   #',' ### '],
+6:['  ## ',' #   ','#    ','#### ','#   #','#   #',' ### '], 7:['#####','    #','   # ','  #  ',' #   ',' #   ',' #   '],
+8:[' ### ','#   #','#   #',' ### ','#   #','#   #',' ### '], 9:[' ### ','#   #','#   #',' ####','    #','   # ',' ##  '],
+':':['     ','  #  ','  #  ','     ','  #  ','  #  ','     '], '!':['  #  ','  #  ','  #  ','  #  ','  #  ','     ','  #  '],
+'.':['     ','     ','     ','     ','     ','     ','  #  '], '-':['     ','     ','     ',' ### ','     ','     ','     '],
+'?':[' ### ','#   #','    #','   # ','  #  ','     ','  #  '], '/':['    #','    #','   # ','  #  ',' #   ','#    ','#    '],
+'(':['   # ','  #  ',' #   ',' #   ',' #   ','  #  ','   # '], ')':[' #   ','  #  ','   # ','   # ','   # ','  #  ',' #   '],
+'×':['     ','#   #',' # # ','  #  ',' # # ','#   #','     '],
+};
+Object.assign(G, {
+',':['     ','     ','     ','     ','     ','  #  ',' #   '], ';':['     ','  #  ','     ','     ','     ','  #  ',' #   '],
+'+':['     ','  #  ','  #  ','#####','  #  ','  #  ','     '], '~':['     ','     ',' #   ','# # #','   # ','     ','     '],
+'>':['     ','   # ','    #','#####','    #','   # ','     '], '=':['     ','     ','#####','     ','#####','     ','     '],
+});
+function textW(s, sc = 1){ return (s.length * 6 - 1) * sc; }
+function pxText(s, x, y, col, sc = 1, align = 'left', shadow){
+  s = s.toUpperCase(); let x0 = align === 'center' ? x - textW(s, sc) / 2 : align === 'right' ? x - textW(s, sc) : x;
+  x0 = R(x0); y = R(y);
+  if (shadow) pxText(s, x0 + sc, y + sc, shadow, sc);
+  b.fillStyle = col;
+  for (let i = 0; i < s.length; i++){ const g = G[s[i]]; if (!g) continue;
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '#') b.fillRect(x0 + (i * 6 + c) * sc, y + r * sc, sc, sc); }
+}
+Object.assign(G, { "'":['  #  ','  #  ','     ','     ','     ','     ','     '], '%':['##  #','## # ','  #  ',' # ##','#  ##','     ','     '], '&':[' ##  ','#  # ',' ##  ','# # #','#  # ',' ## #','     '] });
+
+/* ================= BATTLE DATA (all original / fictional) ================= */
+const TYPES = {
+  normal:['NRM','#a8a878'], fire:['FIR','#f08030'], water:['WTR','#6890f0'], grass:['GRS','#78c850'], electric:['ELC','#f8d030'],
+  flying:['FLY','#a890f0'], rock:['RCK','#b8a038'], steel:['STL','#b8b8d0'], ground:['GRD','#e0c068'], psychic:['PSY','#f85888'],
+  dragon:['DRG','#7038f8'], ice:['ICE','#98d8d8'] };
+// attacker type -> { defender type: multiplier }; anything missing = 1
+const CHART = {
+  fire:{grass:2,ice:2,steel:2,fire:.5,water:.5,rock:.5,dragon:.5}, water:{fire:2,ground:2,rock:2,water:.5,grass:.5,dragon:.5},
+  grass:{water:2,ground:2,rock:2,fire:.5,grass:.5,flying:.5,dragon:.5,steel:.5}, electric:{water:2,flying:2,electric:.5,grass:.5,dragon:.5,ground:0},
+  ground:{fire:2,electric:2,rock:2,steel:2,grass:.5,flying:0}, flying:{grass:2,electric:.5,rock:.5,steel:.5},
+  rock:{fire:2,ice:2,flying:2,steel:.5,ground:.5}, steel:{ice:2,rock:2,fire:.5,water:.5,electric:.5,steel:.5},
+  psychic:{psychic:.5,steel:.5}, dragon:{dragon:2,steel:.5}, ice:{grass:2,ground:2,flying:2,dragon:2,fire:.5,water:.5,ice:.5,steel:.5},
+  normal:{rock:.5,steel:.5} };
+const eff = (mt, types) => types.reduce((m, t) => m * ((CHART[mt] && CHART[mt][t] != null) ? CHART[mt][t] : 1), 1);
+
+// kind: p = physical, s = special.  c = contact (the user rushes the target).  fx = which animation to play.
+const MV = {
+  skyslash:{n:'Sky Slash',t:'flying',p:90,k:'p',c:1,fx:'slash'}, hypertalon:{n:'Hyper Talon',t:'normal',p:85,k:'p',c:1,fx:'slash'},
+  flaredive:{n:'Flare Dive',t:'fire',p:80,k:'p',c:1,fx:'slash'}, mindburst:{n:'Mind Burst',t:'psychic',p:90,k:'s',fx:'psy'},
+  frostray:{n:'Frost Ray',t:'ice',p:90,k:'s',fx:'beam'}, sparkorb:{n:'Spark Orb',t:'electric',p:80,k:'s',fx:'ball'},
+  tidalspout:{n:'Tidal Spout',t:'water',p:150,k:'s',fx:'stream',var:1}, rollingcrush:{n:'Rolling Crush',t:'normal',p:85,k:'p',c:1,fx:'slash'},
+  dragonclaw:{n:'Dragon Claw',t:'dragon',p:80,k:'p',c:1,fx:'slash'}, quakestomp:{n:'Quake Stomp',t:'ground',p:100,k:'p',fx:'quake'},
+  windblade:{n:'Wind Blade',t:'flying',p:75,k:'p',fx:'ball'}, voltswarm:{n:'Volt Swarm',t:'electric',p:90,k:'s',fx:'swarm'},
+  flameburst:{n:'Flame Burst',t:'fire',p:80,k:'s',fx:'ball'}, ironfang:{n:'Iron Fang',t:'steel',p:65,k:'p',c:1,fx:'slash'},
+  leafstorm:{n:'Leaf Storm',t:'grass',p:110,k:'s',fx:'leaf'}, dragonpulse:{n:'Dragon Pulse',t:'dragon',p:85,k:'s',fx:'ball'},
+  leafblade:{n:'Leaf Blade',t:'grass',p:90,k:'p',c:1,fx:'slash'},
+  stoneedge:{n:'Stone Edge',t:'rock',p:100,k:'p',fx:'rocks'}, quakeclaw:{n:'Quake Claw',t:'ground',p:80,k:'p',c:1,fx:'quake'},
+  crossclaw:{n:'Cross Claw',t:'normal',p:70,k:'p',c:1,fx:'slash'}, steelwing:{n:'Steel Wing',t:'steel',p:70,k:'p',c:1,fx:'slash'},
+  earthpower:{n:'Earth Power',t:'ground',p:90,k:'s',fx:'quake'}, ancientpower:{n:'Ancient Power',t:'rock',p:60,k:'s',fx:'rocks'},
+  selfdestruct:{n:'Self-Destruct',t:'normal',p:200,k:'p',fx:'boom',sd:1}, ironslam:{n:'Iron Slam',t:'steel',p:100,k:'p',c:1,fx:'slash'},
+  petalburst:{n:'Petal Burst',t:'grass',p:90,k:'s',fx:'leaf'}, meteorfist:{n:'Meteor Fist',t:'steel',p:100,k:'p',c:1,fx:'slash'} };
+
+// base = [HP, Atk, Def, SpA, SpD, Spe]; hov = hover height; m = size in metres (for the team card)
+const SP = {
+  gustral:{name:'Gustral',types:['normal','flying'],base:[60,85,60,75,50,125],mv:['skyslash','hypertalon','flaredive'],w:48,h:40,hov:10,m:.7},
+  lumira:{name:'Lumira',types:['psychic'],base:[68,65,65,125,115,80],mv:['mindburst','frostray','sparkorb'],w:36,h:48,hov:0,m:1.6},
+  bulwhale:{name:'Bulwhale',types:['water'],base:[170,90,45,90,45,60],mv:['tidalspout','frostray','rollingcrush'],w:150,h:72,hov:0,m:14.5,shield:1},
+  zephyrn:{name:'Zephyrn',types:['dragon','flying'],base:[95,135,80,110,80,100],mv:['dragonclaw','quakestomp','windblade'],w:58,h:52,hov:6,m:1.5},
+  sparkhound:{name:'Sparkhound',types:['electric'],base:[70,75,60,105,60,105],mv:['voltswarm','flameburst','ironfang'],w:48,h:38,hov:0,m:1.5},
+  verdrake:{name:'Verdrake',types:['grass'],base:[70,85,65,105,85,120],mv:['leafstorm','dragonpulse','quakestomp'],w:40,h:52,hov:0,m:1.7,
+    mega:{name:'Mega Verdrake',types:['grass','dragon'],base:[70,110,75,145,85,145],w:60,h:62,m:1.9}},
+  trilox:{name:'Trilox',types:['rock','ground'],base:[75,125,100,70,80,45],mv:['stoneedge','quakeclaw','crossclaw'],w:56,h:48,hov:0,m:1.5,shield:1},
+  ironwing:{name:'Ironwing',types:['steel','flying'],base:[65,80,140,40,70,70],mv:['steelwing','windblade','stoneedge'],w:54,h:46,hov:8,m:1.7,shield:1},
+  claymo:{name:'Claymo',types:['ground','psychic'],base:[60,70,105,70,120,75],mv:['mindburst','earthpower','ancientpower','selfdestruct'],w:34,h:46,hov:6,m:1.5,shield:1},
+  bastigon:{name:'Bastigon',types:['steel','rock'],base:[70,110,180,60,60,50],mv:['ironslam','stoneedge','quakestomp'],w:54,h:46,hov:0,m:2.1,shield:1},
+  lilorite:{name:'Lilorite',types:['rock','grass'],base:[86,81,97,81,107,43],mv:['petalburst','earthpower','ancientpower'],w:48,h:48,hov:0,m:1.5,shield:1},
+  quadrex:{name:'Quadrex',types:['steel','psychic'],base:[80,135,130,95,90,70],mv:['meteorfist','mindburst','quakestomp','crossclaw'],w:60,h:48,hov:0,m:1.6,shield:1,
+    mega:{name:'Mega Quadrex',types:['steel','psychic'],base:[80,145,150,105,110,110],w:70,h:56,m:2.5}},
+};
+const TRAINER = [{name:'Kai', title:'Challenger'}, {name:'Orin', title:'Champion'}];
+const TEAMS = [['gustral','lumira','bulwhale','zephyrn','sparkhound','verdrake'], ['trilox','ironwing','claymo','bastigon','lilorite','quadrex']];
+const LV = 50;
+const statsOf = base => ({ a:base[1]+20, d:base[2]+20, sa:base[3]+20, sd:base[4]+20, sp:base[5]+20 });
+
+/* ================= THE BATTLE SIMULATION (deterministic from a seed) ================= */
+function simulate(seed){
+  const rng = mulberry32(seed), ev = [];
+  const side = TEAMS.map(ids => ids.map(id => { const d = SP[id], hp = d.base[0] + 75; return { id, hp, max:hp, st:statsOf(d.base), types:d.types.slice(), mega:false }; }));
+  const act = [0, 0], vis = [false, false], mega = [false, false];
+  let turn = 0, crits = 0, usedSD = 0;
+  const snap = () => ({ hp:side.map(t => t.map(m => m.hp)), act:act.slice(), vis:vis.slice(), mega:mega.slice(), turn });
+  const push = (o) => { o.st = snap(); ev.push(o); return o; };
+  const dmgCalc = (A, D, mv, roll, crit) => {
+    const P = mv.var ? Math.max(1, Math.floor(mv.p * A.hp / A.max)) : mv.p;
+    const at = mv.k === 'p' ? A.st.a : A.st.sa, df = mv.k === 'p' ? D.st.d : D.st.sd;
+    let d = Math.floor(Math.floor((2 * LV / 5 + 2) * P * at / df) / 50) + 2;
+    if (A.types.includes(mv.t)) d = Math.floor(d * 1.5);
+    d = Math.floor(d * eff(mv.t, D.types) * roll * (crit ? 1.5 : 1));
+    return eff(mv.t, D.types) === 0 ? 0 : Math.max(1, d);
+  };
+  // each trainer's brain: pick the move that looks best right now; Self-Destruct only as a last stand
+  const choose = (A, D) => {
+    let best = null, bs = -1;
+    for (const key of SP[A.id].mv){
+      const mv = MV[key];
+      if (mv.sd && A.hp > A.max * .35) continue;
+      let s = Math.min(D.hp, dmgCalc(A, D, mv, .925, false)) * (1 + (rng() - .5) * .12);
+      if (mv.sd) s = Math.min(D.hp, s) * 1.15;
+      if (s > bs){ bs = s; best = key; }
+    }
+    return best;
+  };
+  const sendIn = (s) => { vis[s] = false; const o = push({ k:'send', side:s, idx:act[s] }); vis[s] = true; return o; };
+  vis[0] = vis[1] = false; push({ k:'challenge' });
+  ev.push({ k:'send2', st:snap() }); vis[0] = vis[1] = true;
+  const alive = s => side[s].some(m => m.hp > 0);
+  while (alive(0) && alive(1) && turn < 80){
+    turn++;
+    const A0 = side[0][act[0]], A1 = side[1][act[1]];
+    if (act[0] === 5 && act[1] === 5 && !mega[0] && !mega[1]){
+      push({ k:'mega' }); mega[0] = mega[1] = true;
+      for (const s of [0, 1]){ const m = side[s][5], d = SP[m.id].mega; m.types = d.types.slice(); m.st = statsOf(d.base); m.mega = true; }
+    }
+    const pick = [choose(A0, A1), choose(A1, A0)];
+    let order = [0, 1];
+    if (A0.st.sp < A1.st.sp || (A0.st.sp === A1.st.sp && rng() < .5)) order = [1, 0];
+    for (const s of order){
+      const A = side[s][act[s]], t = 1 - s, D = side[t][act[t]];
+      if (A.hp <= 0) continue;
+      const key = pick[s], mv = MV[key];
+      const crit = rng() < 1 / 12, roll = .85 + rng() * .15;
+      const d = Math.min(D.hp, dmgCalc(A, D, mv, roll, crit));
+      const e = eff(mv.t, D.types);
+      const o = push({ k:'move', side:s, key, d, e, crit, hp1:D.hp - d, dead:D.hp - d <= 0, selfKO:!!mv.sd, nameA:A.mega ? SP[A.id].mega.name : SP[A.id].name });
+      if (crit && d > 0) crits++;
+      if (mv.sd) usedSD++;
+      D.hp -= d; if (mv.sd) A.hp = 0;
+      if (D.hp <= 0){ push({ k:'faint', side:t }); vis[t] = false; }
+      if (A.hp <= 0 && mv.sd){ push({ k:'faint', side:s }); vis[s] = false; }
+    }
+    for (const s of [0, 1]){
+      if (side[s][act[s]].hp <= 0 && alive(s)){ act[s]++; sendIn(s); }
+    }
+  }
+  const winner = alive(0) && !alive(1) ? 0 : alive(1) && !alive(0) ? 1 : -1;
+  push({ k:'end', winner });
+  return { ev, winner, turns:turn, crits, usedSD, finalDuel:ev.some(e => e.k === 'mega') };
+}
+
+/* ================= TINY PIXEL RASTER (shapes -> pixels, shaded, auto-outlined) ================= */
+const hex2 = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const mixc = (a, z, k) => a.map((v, i) => Math.round(v + (z[i] - v) * k));
+const pal = h => { const c = Array.isArray(h) ? h : hex2(h); return [mixc(c, [255, 255, 255], .34), c, mixc(c, [8, 8, 40], .4)]; };
+const OUT = [22, 18, 44];
+const pick = (p, nx, ny) => Array.isArray(p[0]) ? (ny < -.38 || (nx < -.55 && ny < .1) ? p[0] : ny > .32 ? p[2] : p[1]) : p;
+class Rs {
+  constructor(w, h){ this.w = w; this.h = h; this.d = new Uint8ClampedArray(w * h * 4); }
+  clear(){ this.d.fill(0); }
+  px(x, y, c){ x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
+    const i = (y * this.w + x) * 4, d = this.d; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255; }
+  rect(x, y, w, h, c){ x = Math.round(x); y = Math.round(y); for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, Array.isArray(c[0]) ? c[1] : c); }
+  ell(cx, cy, rx, ry, p){
+    for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++){
+      const nx = (x - cx) / rx, ny = (y - cy) / ry; if (nx * nx + ny * ny <= 1) this.px(x, y, pick(p, nx, ny)); }
+  }
+  poly(pts, p){
+    let y0 = 1e9, y1 = -1e9; for (const q of pts){ y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); }
+    const hh = (y1 - y0) / 2 || 1, cyy = (y0 + y1) / 2;
+    for (let y = Math.ceil(y0); y <= Math.floor(y1); y++){
+      const xs = [], yy = y + .01;
+      for (let i = 0; i < pts.length; i++){ const a = pts[i], c = pts[(i + 1) % pts.length];
+        if ((a[1] <= yy && c[1] > yy) || (c[1] <= yy && a[1] > yy)) xs.push(a[0] + (yy - a[1]) / (c[1] - a[1]) * (c[0] - a[0])); }
+      xs.sort((m, n) => m - n);
+      for (let i = 0; i + 1 < xs.length; i += 2) for (let x = Math.round(xs[i]); x <= Math.round(xs[i + 1]); x++) this.px(x, y, pick(p, 0, (y - cyy) / hh));
+    }
+  }
+  line(x0, y0, x1, y1, c, th = 1){
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+    for (let i = 0; i <= n; i++){ const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n; this.rect(Math.round(x - (th - 1) / 2), Math.round(y - (th - 1) / 2), th, th, c); }
+  }
+  outline(col){
+    const w = this.w, h = this.h, d = this.d, a = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) a[i] = d[i * 4 + 3] ? 1 : 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+      if (a[y * w + x]) continue;
+      if ((x > 0 && a[y * w + x - 1]) || (x < w - 1 && a[y * w + x + 1]) || (y > 0 && a[(y - 1) * w + x]) || (y < h - 1 && a[(y + 1) * w + x])){
+        const i = (y * w + x) * 4; d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255; }
+    }
+  }
+}
+const SPR = {};
+function spriteCanvas(key, w, h, draw, t){
+  let s = SPR[key];
+  if (!s){ s = SPR[key] = { r:new Rs(w, h), c:document.createElement('canvas') }; s.c.width = w; s.c.height = h; s.x = s.c.getContext('2d'); }
+  s.r.clear(); draw(s.r, t); s.r.outline(OUT); s.x.putImageData(new ImageData(s.r.d, w, h), 0, 0); return s.c;
+}
+const WH = [250, 246, 236], KK = [24, 22, 44];
+
+/* ================= THE TWELVE CREATURES (+2 Mega forms), each drawn facing right ================= */
+const DRAW = {
+  gustral(r, t){
+    const f = Math.sin(Math.floor(t * 10) * 1.3) * 3, B = pal('#3b6fd8'), Rd = pal('#e8582c'), Y = [255, 212, 70];
+    r.poly([[14, 22], [2, 31], [8, 34], [17, 27]], B); r.poly([[12, 25], [5, 38], [11, 37], [18, 29]], B);
+    r.poly([[22, 19], [14, 8 - f], [27, 6 - f], [32, 17]], pal('#2a54b0'));
+    r.ell(25, 23, 13, 8, B); r.ell(31, 27, 8, 5, Rd); r.ell(36, 14, 7, 6, B);
+    r.poly([[41, 13], [47, 16], [41, 19]], Y); r.rect(37, 11, 3, 3, WH); r.rect(38, 12, 2, 2, KK); r.rect(32, 8, 3, 2, Rd[1]);
+    r.poly([[23, 21], [12, 11 + f], [28, 7 + f], [36, 20]], pal('#4c82ee'));
+    r.line(25, 31, 25, 35, Y); r.line(31, 31, 31, 35, Y);
+  },
+  lumira(r, t){
+    const s = Math.sin(t * 3), G = pal('#3fc17c'), Pk = [255, 92, 140], Sk = pal('#ffeaea'), Wd = pal('#f6f3ff'), pu = 1.2 + Math.sin(t * 5) * .8;
+    r.poly([[18, 24], [31, 46], [5, 46]], Wd); r.rect(8, 44, 20, 2, pal('#d9d2f0')[1]);
+    r.ell(18, 26, 5, 6, Wd); r.poly([[18, 27], [21, 31], [18, 37], [15, 31]], Pk);
+    r.ell(18, 11 + s * .4, 8, 8, G); r.ell(10, 16, 3, 6, G); r.ell(26, 16, 3, 6, G);
+    r.ell(18, 13, 5, 6, Sk); r.rect(15, 12, 2, 3, [220, 40, 60]); r.rect(20, 12, 2, 3, [220, 40, 60]);
+    r.line(14, 27, 6, 34, Sk[1], 2); r.line(22, 27, 29, 30, Sk[1], 2); r.ell(31, 28, 2 + pu, 2 + pu, pal('#ff7ac0'));
+  },
+  bulwhale(r, t){
+    const f = Math.sin(t * 2.2), Bl = pal('#4d86e8'), Bd = pal('#3a68c8'), Wh = pal('#e4f0ff');
+    r.poly([[18, 42 + f * 2], [3, 24 + f * 3], [14, 26 + f * 2], [26, 38]], Bd); r.poly([[18, 46 + f * 2], [3, 63 + f * 2], [14, 61], [28, 50]], Bd);
+    r.ell(82, 42, 66, 25, Bl); r.ell(90, 57, 56, 10, Wh);
+    for (let i = 0; i < 7; i++) r.line(44 + i * 11, 50, 46 + i * 11, 60, Bd[2]);
+    r.poly([[80, 52], [64, 66], [86, 65], [100, 55]], Bd);
+    r.rect(126, 33, 6, 6, WH); r.rect(128, 34, 4, 5, KK); r.rect(110, 23, 3, 3, [240, 90, 90]); r.rect(118, 21, 3, 3, [240, 90, 90]);
+    r.line(147, 49, 118, 53, KK);
+    for (let i = 0; i < 7; i++){ const ph = (t * 1.1 + i / 7) % 1; r.rect(98 + Math.sin(i * 2.3) * 5 + ph * (i - 3) * 3, 18 - ph * 16, 2, 2, [200, 232, 255]); }
+  },
+  zephyrn(r, t){
+    const f = Math.sin(Math.floor(t * 8) * 1.7) * 5, Bl = pal('#4a7fd6'), Rd = pal('#e0503a'), Cr = pal('#f4ecd0');
+    r.poly([[20, 32], [3, 38], [7, 43], [22, 38]], Bl); r.poly([[3, 36], [0, 45], [10, 44]], Rd);
+    r.poly([[28, 26], [16, 8 - f], [32, 10 - f], [40, 24]], pal('#b83a2c'));
+    r.rect(24, 41, 4, 7, Bl[2]); r.rect(36, 41, 4, 7, Bl[2]);
+    r.ell(32, 33, 13, 10, Bl); r.ell(35, 37, 8, 6, Cr); r.ell(44, 21, 7, 6, Bl); r.poly([[48, 19], [57, 23], [48, 27]], Bl);
+    r.poly([[41, 15], [35, 6], [46, 13]], Rd); r.rect(47, 18, 3, 3, WH); r.rect(48, 19, 2, 2, KK); r.rect(51, 26, 2, 2, WH);
+    r.poly([[34, 28], [22, 12 + f], [42, 8 + f], [46, 26]], pal('#ea664c'));
+  },
+  sparkhound(r, t){
+    const Y = pal('#f5d84a'), Bl = pal('#3a78e0'), w = Math.sin(t * 9) * 2;
+    r.poly([[14, 22], [3, 12 + w], [6, 20], [0, 24 + w], [10, 28]], Bl);
+    r.rect(16, 28, 5, 8, Y[2]); r.rect(22, 29, 4, 7, Y[2]); r.rect(32, 28, 5, 8, Y[2]); r.rect(38, 29, 4, 7, Y[2]);
+    r.poly([[32, 14], [27, 2], [35, 9], [38, 0], [42, 11]], Bl);
+    r.ell(27, 22, 14, 8, Y); r.ell(39, 16, 7, 6, Y); r.ell(46, 19, 3, 3, Y); r.rect(48, 18, 2, 2, KK);
+    r.poly([[37, 11], [34, 2], [42, 9]], Bl); r.rect(40, 14, 3, 3, WH); r.rect(41, 15, 2, 2, KK);
+    r.line(24, 18, 28, 21, Bl[1]); r.line(28, 18, 32, 22, Bl[1]);
+  },
+  verdrake(r, t){
+    const s = Math.sin(t * 3) * 2, G = pal('#4dbb4a'), Lt = pal('#a6e060'), Rd = pal('#d84a3a');
+    r.poly([[15, 40], [3, 44 + s], [0, 50], [9, 50], [18, 46]], G); r.poly([[6, 44 + s], [1, 38], [10, 42]], Lt);
+    r.rect(16, 42, 5, 8, G[2]); r.rect(23, 42, 5, 8, G[2]);
+    r.ell(22, 32, 7, 12, G); r.ell(24, 34, 3, 9, Rd);
+    r.line(17, 27, 10, 35, G[1], 2); r.poly([[10, 35], [4, 42], [12, 40]], Lt);
+    r.ell(23, 14, 6, 6, G); r.poly([[27, 13], [36, 16], [27, 19]], G); r.rect(25, 11, 3, 3, [255, 226, 70]); r.rect(26, 12, 2, 2, KK);
+    r.poly([[19, 10], [12, 1], [24, 6]], Lt);
+  },
+  verdrakeM(r, t){
+    const s = Math.sin(t * 3) * 2, G = pal('#2f9e46'), Lt = pal('#b0ee62'), Rd = pal('#e0402e');
+    r.poly([[18, 46], [3, 52 + s], [0, 60], [10, 60], [22, 54]], G); r.ell(5, 57 + s, 3, 3, Rd); r.ell(10, 52 + s, 3, 3, Rd);
+    r.poly([[26, 30], [10, 8], [22, 22], [14, 2], [30, 20]], Lt); r.poly([[34, 30], [48, 6], [38, 22], [52, 10], [38, 34]], Lt);
+    r.rect(21, 50, 6, 10, G[2]); r.rect(30, 50, 6, 10, G[2]);
+    r.ell(29, 38, 9, 14, G); r.ell(31, 40, 4, 10, Rd);
+    r.line(23, 32, 14, 42, G[1], 3); r.poly([[14, 42], [6, 52], [17, 49]], Lt);
+    r.line(36, 32, 44, 36, G[1], 3); r.poly([[44, 36], [54, 36], [46, 42]], Lt);
+    r.ell(31, 17, 7, 7, G); r.poly([[36, 16], [47, 20], [36, 25]], G); r.rect(33, 13, 4, 4, [255, 236, 90]); r.rect(35, 14, 2, 3, KK);
+    r.poly([[26, 12], [16, 0], [31, 8]], Rd); r.poly([[30, 9], [24, -2], [35, 7]], Lt);
+  },
+  trilox(r, t){
+    const Br = pal('#a67c54'), Pl = pal('#dccba2'), w = Math.sin(t * 4);
+    r.poly([[14, 34], [2, 40], [8, 44], [18, 40]], Br);
+    r.rect(18, 38, 5, 8, Br[2]); r.rect(30, 38, 5, 8, Br[2]);
+    r.ell(26, 28, 14, 12, Br); r.ell(23, 20, 9, 6, Pl); r.ell(30, 24, 6, 5, Pl);
+    r.poly([[40, 24], [54, 18 + w], [53, 26 + w], [48, 30]], pal('#8a6a48')); r.poly([[40, 30], [54, 31 - w], [50, 37 - w], [42, 35]], pal('#8a6a48'));
+    r.ell(38, 15, 7, 6, Br); r.poly([[34, 10], [30, 1], [42, 9]], Pl); r.rect(40, 12, 3, 3, [255, 80, 70]);
+  },
+  ironwing(r, t){
+    const f = Math.sin(Math.floor(t * 8) * 1.7) * 3, S = pal('#93a3be'), Dk = pal('#6a7894'), Or = [255, 150, 60];
+    r.poly([[14, 24], [1, 30], [5, 36], [8, 42], [16, 32]], Dk);
+    for (let i = 0; i < 4; i++) r.poly([[26, 22], [18 - i * 3, 8 + i * 5 - f], [24 - i * 3, 6 + i * 5 - f], [32, 20]], i % 2 ? Dk : S);
+    r.ell(27, 25, 12, 9, S); r.ell(40, 15, 6, 6, S); r.poly([[44, 14], [53, 18], [44, 20]], Or); r.rect(40, 12, 3, 3, [255, 70, 70]);
+    r.poly([[36, 10], [33, 3], [41, 8]], Dk);
+    for (let i = 0; i < 3; i++) r.poly([[28, 24], [20 + i * 4, 30 + i * 4 + f], [24 + i * 4, 31 + i * 4 + f], [34, 26]], i % 2 ? S : Dk);
+    r.line(28, 33, 28, 38, Or); r.line(34, 33, 34, 38, Or);
+  },
+  claymo(r, t){
+    const Cl = pal('#c46a3a'), Dk = pal('#8e4624'), s = Math.sin(t * 3.5) * 2;
+    r.ell(17, 31, 10, 13, Cl); r.ell(17, 15, 8, 8, Dk); r.ell(17, 21, 9, 4, Dk);
+    r.rect(11, 14, 12, 3, [250, 80, 70]); r.rect(13, 14, 3, 3, [255, 220, 120]); r.rect(19, 14, 3, 3, [255, 220, 120]);
+    r.rect(12, 30, 10, 2, Dk[2]); r.rect(14, 35, 6, 2, Dk[2]); r.rect(15, 26, 2, 2, Dk[2]); r.rect(19, 26, 2, 2, Dk[2]);
+    r.ell(4, 28 + s, 3, 4, Cl); r.ell(30, 28 - s, 3, 4, Cl);
+    r.ell(17, 4, 5, 3, Dk);
+  },
+  bastigon(r, t){
+    const S = pal('#6d7c99'), Lt = pal('#9eadc8'), Dk = pal('#4f5c78');
+    r.poly([[10, 26], [1, 34], [8, 36], [14, 32]], Dk);
+    r.rect(10, 34, 8, 10, Dk[2]); r.rect(36, 34, 8, 10, Dk[2]); r.rect(19, 36, 7, 8, Dk[1]); r.rect(28, 36, 7, 8, Dk[1]);
+    r.ell(27, 27, 19, 11, S); r.ell(27, 18, 14, 5, Lt); r.ell(26, 33, 12, 3, WH);
+    r.ell(44, 21, 8, 7, Dk); r.poly([[40, 12], [44, 4], [47, 14]], Lt); r.poly([[46, 16], [53, 18], [47, 21]], Lt);
+    r.rect(46, 20, 3, 3, WH); r.rect(47, 21, 2, 2, KK);
+    for (let i = 0; i < 4; i++) r.poly([[16 + i * 7, 18], [18 + i * 7, 13], [20 + i * 7, 18]], Dk);
+  },
+  lilorite(r, t){
+    const sw = Math.sin(t * 2.5), Pk = pal('#ee6e9e'), Pu = pal('#9a6cc4'), Br = pal('#8a6f68');
+    for (let i = 0; i < 5; i++){ const a = i / 4 * Math.PI, x = 24 + Math.cos(a + Math.PI) * 16, y = 40 + Math.sin(a) * 4;
+      r.line(24, 38, x, y + 4, Pu[2], 2); r.line(x, y + 4, x + (i - 2) * 1.5 + sw * 2, y + 7, Pu[1], 2); }
+    r.ell(24, 38, 10, 7, Br); r.poly([[22, 34], [26, 34], [27, 20], [21, 20]], Pu);
+    for (let i = 0; i < 7; i++){ const a = i / 7 * Math.PI * 2 + sw * .08; r.ell(24 + Math.cos(a) * 10, 15 + Math.sin(a) * 9, 5, 5, i % 2 ? Pk : pal('#f58cb6')); }
+    r.ell(24, 15, 7, 7, Pu); r.rect(20, 13, 3, 3, [255, 236, 90]); r.rect(26, 13, 3, 3, [255, 236, 90]); r.rect(22, 19, 5, 1, KK);
+  },
+  quadrex(r, t){
+    const S = pal('#7c9bd2'), Dk = pal('#52709f'), Rd = [240, 60, 70], w = Math.sin(t * 3);
+    for (const x of [14, 22, 38, 46]) r.poly([[x, 28], [x + 7, 28], [x + 8, 46], [x + 1, 46]], x < 30 ? Dk : S);
+    r.ell(34, 24, 21, 11, S); r.ell(34, 17, 14, 4, pal('#a9c0e8'));
+    r.ell(50, 26, 8, 7, S); r.rect(50, 22, 3, 3, Rd); r.rect(55, 22, 3, 3, Rd); r.line(48, 28, 56, 31, KK);
+    r.line(46, 20, 54, 14 + w, Rd, 2); r.poly([[24, 14], [26, 8], [30, 14]], Dk); r.poly([[32, 13], [35, 6], [38, 13]], Dk);
+  },
+  quadrexM(r, t){
+    const S = pal('#8aa8dc'), Dk = pal('#5b7ab0'), Rd = [255, 70, 80], Gl = [255, 226, 110], g = .5 + Math.sin(t * 6) * .5;
+    for (const x of [14, 25, 44, 55]) r.poly([[x, 32], [x + 8, 32], [x + 9, 54], [x + 1, 54]], x < 36 ? Dk : S);
+    for (const x of [14, 25, 44, 55]) r.poly([[x + 1, 50], [x + 9, 50], [x + 12, 55], [x, 55]], Rd);
+    r.ell(40, 27, 25, 13, S); r.ell(40, 18, 17, 5, pal('#b9d0f4'));
+    for (let i = 0; i < 4; i++) r.rect(26 + i * 8, 24 + (i % 2) * 3, 5, 2, g > .5 ? Gl : [200, 170, 80]);
+    r.ell(58, 29, 9, 8, S); r.rect(58, 25, 4, 4, Rd); r.rect(64, 25, 4, 4, Rd); r.line(56, 32, 66, 35, KK);
+    r.line(54, 22, 66, 14 + g * 2, Rd, 3); r.poly([[27, 14], [30, 5], [35, 14]], Dk); r.poly([[38, 13], [42, 3], [46, 13]], Dk); r.poly([[17, 20], [10, 12], [22, 17]], Dk);
+  },
+};
+// size of the Mega drawings are listed in SP[id].mega
+function monCanvas(id, mega, t){
+  const d = mega ? SP[id].mega : SP[id], f = Math.floor(t * 12) / 12;
+  return spriteCanvas(id + (mega ? 'M' : ''), d.w, d.h, mega ? DRAW[id + 'M'] : DRAW[id], f);
+}
+
+/* ================= TRAINERS (Kai faces right, Orin faces left) ================= */
+function trainerCanvas(who, pose, t){
+  return spriteCanvas('tr' + who + pose, 30, 44, (r) => {
+    const sk = pal('#f6c9a0'), bob = Math.round(Math.sin(t * 3) * .6);
+    if (who === 0){
+      const Tl = pal('#2aa3a0'), Rd = pal('#e23b3b'), Nv = pal('#2b3e7a'), Br = pal('#6b3f26');
+      r.rect(10, 34, 4, 9, Nv[2]); r.rect(16, 34, 4, 9, Nv[1]);
+      r.ell(15, 26 + bob, 7, 9, Tl); r.rect(8, 20 + bob, 14, 3, pal('#f4d44a')[1]);
+      r.ell(15, 12 + bob, 6, 6, sk); r.ell(14, 8 + bob, 7, 5, Rd); r.poly([[17, 9 + bob], [27, 11 + bob], [17, 13 + bob]], Rd);
+      r.rect(18, 12 + bob, 2, 2, KK); r.ell(8, 14 + bob, 3, 5, Br);
+      if (pose === 1){ r.line(20, 22, 26, 12, sk[1], 2); r.ell(27, 10, 3, 3, pal('#ff4040')); } else { r.line(20, 22, 23, 30, sk[1], 2); }
+      r.line(10, 22, 7, 30, sk[1], 2);
+    } else {
+      const Su = pal('#2d2a4e'), Cp = pal('#8fb8e8'), Sv = pal('#d9dde8');
+      r.rect(10, 34, 4, 9, Su[2]); r.rect(16, 34, 4, 9, Su[1]);
+      r.poly([[8, 18 + bob], [24, 18 + bob], [28, 42], [4, 42]], Cp);
+      r.ell(15, 26 + bob, 7, 9, Su); r.rect(13, 20 + bob, 4, 14, pal('#c9d4ee')[1]);
+      r.ell(15, 12 + bob, 6, 6, sk); r.ell(15, 8 + bob, 7, 5, Sv); r.ell(9, 12 + bob, 3, 5, Sv);
+      r.rect(18, 12 + bob, 2, 2, KK);
+      if (pose === 1){ r.line(20, 22, 26, 12, sk[1], 2); r.ell(27, 10, 3, 3, pal('#4a8cff')); } else { r.line(20, 22, 23, 30, sk[1], 2); }
+      r.line(10, 22, 7, 30, sk[1], 2);
+    }
+  }, 0);
+}
+
+/* ================= SMALL DRAWING HELPERS ================= */
+const rect = (x, y, w, h, c) => { b.fillStyle = c; b.fillRect(R(x), R(y), R(w), R(h)); };
+function disc(x, y, r, c){ b.fillStyle = c; x = R(x); y = R(y); for (let j = -r; j <= r; j++){ const w = Math.floor(Math.sqrt(r * r - j * j + .5)); b.fillRect(x - w, y + j, w * 2 + 1, 1); } }
+function ring(x, y, r, c){ b.fillStyle = c; x = R(x); y = R(y); const n = Math.max(8, r * 6); for (let i = 0; i < n; i++){ const a = i / n * Math.PI * 2; b.fillRect(R(x + Math.cos(a) * r), R(y + Math.sin(a) * r), 1, 1); } }
+function pline(x0, y0, x1, y1, c, th = 1){ b.fillStyle = c; const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)))); for (let i = 0; i <= n; i++) b.fillRect(R(x0 + (x1 - x0) * i / n - th / 2), R(y0 + (y1 - y0) * i / n - th / 2), th, th); }
+function zap(x0, y0, x1, y1, seed, c, th){ let px = x0, py = y0; const n = 7; for (let i = 1; i <= n; i++){ const k = i / n, nx = lerp(x0, x1, k) + (i < n ? (hash(seed * 31 + i) - .5) * 16 : 0), ny = lerp(y0, y1, k); pline(px, py, nx, ny, c, th); px = nx; py = ny; } }
+function box(x, y, w, h, fill = '#16152e', edge = '#f4f1ff'){ rect(x - 1, y - 1, w + 2, h + 2, '#050510'); rect(x, y, w, h, edge); rect(x + 1, y + 1, w - 2, h - 2, '#050510'); rect(x + 2, y + 2, w - 4, h - 4, fill); }
+const tcol = t => TYPES[t][1];
+const scr = document.createElement('canvas'), scx = scr.getContext('2d', { willReadFrequently:true });
+function tint(c, col, a){ scr.width = c.width; scr.height = c.height; scx.drawImage(c, 0, 0); scx.globalCompositeOperation = 'source-atop'; scx.globalAlpha = a; scx.fillStyle = col; scx.fillRect(0, 0, c.width, c.height); scx.globalCompositeOperation = 'source-over'; scx.globalAlpha = 1; return scr; }
+function dissolve(c, p){ scr.width = c.width; scr.height = c.height; scx.drawImage(c, 0, 0); const im = scx.getImageData(0, 0, c.width, c.height), d = im.data;
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++){ const i = (y * c.width + x) * 4; if (d[i + 3] && hash(x * 977 + y * 131) < p){ d[i + 3] = 0; } else if (d[i + 3]){ d[i] = lerp(d[i], 255, p * .7); d[i + 1] = lerp(d[i + 1], 255, p * .7); d[i + 2] = lerp(d[i + 2], 255, p * .7); } }
+  scx.putImageData(im, 0, 0); return scr; }
+
+/* ================= THE CAVE (static part drawn once, waterfall + sparkle animated per frame) ================= */
+const bg = document.createElement('canvas'); bg.width = BW; bg.height = BH;
+function buildBG(){
+  const g = bg.getContext('2d');
+  const rc = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+  for (let y = 0; y < 144; y += 4){ const k = y / 144, c = mixc(hex2('#070b26'), hex2('#2a1f55'), k); rc(0, y, BW, 4, `rgb(${c[0]},${c[1]},${c[2]})`); }
+  // back wall rocks
+  for (let i = 0; i < 90; i++){ const x = hash(i * 3) * BW, y = hash(i * 3 + 1) * 120, w = 6 + hash(i * 3 + 2) * 22, h = 4 + hash(i * 7) * 10; rc(x, y, w, h, hash(i) > .5 ? '#1b1a42' : '#25215a'); }
+  // side walls (jagged)
+  for (let y = 0; y < 150; y += 3){ const lw = 38 + Math.sin(y * .09) * 14 + hash(y) * 8, rw = 38 + Math.cos(y * .07) * 14 + hash(y + 99) * 8;
+    rc(0, y, lw, 3, y % 9 < 3 ? '#14133a' : '#1a1948'); rc(BW - rw, y, rw, 3, y % 9 < 3 ? '#14133a' : '#1a1948');
+    rc(lw - 2, y, 2, 3, '#2d2a6a'); rc(BW - rw, y, 2, 3, '#2d2a6a'); }
+  // stalactites
+  for (let i = 0; i < 26; i++){ const x = i * 13 + hash(i) * 8, h = 8 + hash(i + 40) * 22; g.fillStyle = '#12113a'; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 9, 0); g.lineTo(x + 4.5, h); g.fill();
+    g.fillStyle = '#242160'; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 3, 0); g.lineTo(x + 4.5, h); g.fill(); }
+  // glowing crystals
+  for (const [x, y, c] of [[34, 112, '#5ae0ff'], [48, 118, '#c88cff'], [284, 114, '#5ae0ff'], [270, 120, '#ff8cd2'], [20, 84, '#c88cff'], [300, 80, '#5ae0ff']]){
+    g.fillStyle = c; g.beginPath(); g.moveTo(x, y); g.lineTo(x + 3, y - 12); g.lineTo(x + 6, y); g.fill(); g.fillStyle = '#ffffffaa'; g.fillRect(x + 2, y - 9, 1, 6); }
+  // floor: far pool + rock shelf
+  rc(0, 116, BW, 28, '#2a2a66'); rc(40, 112, 240, 12, '#1d4a94'); rc(40, 112, 240, 2, '#3b7fd0');
+  for (let x = 0; x < BW; x += 6){ const h = 2 + hash(x) * 3; rc(x, 124, 6, 144 - 124, hash(x + 5) > .5 ? '#34327a' : '#2c2a6c'); rc(x, 124, 6, 1, '#4a47a0'); }
+  rc(0, 144, BW, 36, '#14132f'); rc(0, 134, BW, 10, '#211f55'); for (let x = 0; x < BW; x += 10) rc(x, 134, 5, 1, '#3a3790');
+}
+function drawBG(t){
+  b.drawImage(bg, 0, 0);
+  // waterfall
+  rect(146, 0, 30, 114, '#2f6bb8');
+  for (let i = 0; i < 15; i++){ const x = 146 + i * 2, off = (t * (40 + hash(i) * 30) + hash(i + 9) * 60) % 40;
+    for (let yy = -40 + off; yy < 114; yy += 40){ rect(x, yy, 1 + (i % 2), 16 + hash(i) * 10, i % 3 ? '#a9dcff' : '#e9f6ff'); } }
+  rect(146, 0, 2, 114, '#1f4f95'); rect(174, 0, 2, 114, '#1f4f95');
+  for (let i = 0; i < 9; i++){ const x = 160 + Math.sin(t * 1.4 + i * 1.7) * 22, y = 112 + Math.sin(t * 2 + i) * 2; b.globalAlpha = .55; disc(x, y, 5 + (i % 3), '#e9f6ff'); b.globalAlpha = 1; }
+  // pool sparkles
+  for (let i = 0; i < 18; i++){ const x = 44 + hash(i) * 232, y = 114 + hash(i + 5) * 8; if (Math.sin(t * 3 + i * 2.1) > .55) rect(x, y, 3, 1, '#bfe4ff'); }
+  // dust motes
+  for (let i = 0; i < 16; i++){ const x = (hash(i * 5) * BW + t * (3 + hash(i) * 4)) % BW, y = 20 + hash(i * 5 + 1) * 100 + Math.sin(t + i) * 3; rect(x, y, 1, 1, i % 2 ? '#8fa0ff' : '#ffffff55'); }
+}
+
+/* ================= HUD, DIALOG ================= */
+const hpMax = id => SP[id].base[0] + 75;
+function chips(types, x, y){ types.forEach((tp, i) => { rect(x + i * 21, y, 20, 9, '#050510'); rect(x + i * 21 + 1, y + 1, 18, 7, tcol(tp)); pxText(TYPES[tp][0], x + i * 21 + 10, y + 1, '#111122', 1, 'center'); }); }
+function hud(side, id, mega, hp, st){
+  const d = mega ? SP[id].mega : SP[id], max = hpMax(id), x = side ? 212 : 4, y = 4, r = clamp(hp / max);
+  box(x, y, 104, 38);
+  pxText(d.name, x + 6, y + 6, '#ffffff'); if (!mega) pxText('LV' + LV, x + 98, y + 6, '#a9a6d8', 1, 'right');
+  pxText('HP', x + 6, y + 17, '#ffcf4a'); rect(x + 20, y + 17, 76, 6, '#050510'); rect(x + 21, y + 18, 74, 4, '#2c2c52');
+  rect(x + 21, y + 18, Math.max(r > 0 ? 1 : 0, R(74 * r)), 4, r > .5 ? '#3ee05a' : r > .2 ? '#f5d84a' : '#ee453e');
+  pxText(Math.ceil(hp) + '/' + max, x + 98, y + 28, '#ffffff', 1, 'right');
+  chips(d.types, x + 6, y + 27);
+  // trainer + party orbs
+  const by = y + 42; pxText(TRAINER[side].name, x + 4, by, '#ffffff', 1, 'left', '#050510');
+  for (let i = 0; i < 6; i++){ const alive = st.hp[side][i] > 0, here = i === st.act[side]; disc(x + 40 + i * 9, by + 3, 3, '#050510'); disc(x + 40 + i * 9, by + 3, 2, alive ? (here ? '#ffe45a' : '#ff5a5a') : '#4a4a66'); }
+}
+function dialog(l1, l2, p1 = 1, p2 = 1){
+  box(4, 144, 312, 33);
+  const cut = (s, p) => s.toUpperCase().slice(0, Math.floor(s.length * p + .001));
+  if (l1) pxText(cut(l1, p1), 12, 151, '#ffffff'); if (l2) pxText(cut(l2, p2), 12, 163, '#ffe9a8');
+}
+
+/* ================= EFFECT HELPERS (positions come from the sprites) ================= */
+const LX = 88, RX = 232, FY = 130;
+function spot(side, id, mega, t){
+  const d = mega ? SP[id].mega : SP[id], hov = SP[id].hov || 0;
+  return { x: side ? RX : (id === 'bulwhale' ? 84 : LX), y: FY - hov + (hov ? Math.sin(t * 3 + side) * 2 : 0), w: d.w, h: d.h };
+}
+function drawMon(side, id, mega, t, o = {}){
+  const sp = spot(side, id, mega, t), sc = o.sc == null ? 1 : o.sc; let c = monCanvas(id, mega, t);
+  if (o.dis) c = dissolve(c, o.dis); if (o.flash) c = tint(c, '#ffffff', o.flash); if (o.tc) c = tint(c, o.tc, o.ta);
+  b.save(); b.globalAlpha = o.a == null ? 1 : o.a; b.translate(R(sp.x + (o.dx || 0)), R(sp.y + (o.dy || 0) + 2)); b.scale((side ? -1 : 1) * sc, sc);
+  b.drawImage(c, -Math.floor(c.width / 2), -c.height); b.restore(); return sp;
+}
+function shadow(x, w){ b.fillStyle = 'rgba(0,0,0,.38)'; const rx = w * .38; for (let j = -3; j <= 3; j++){ const ww = Math.floor(rx * Math.sqrt(1 - j * j / 12)); b.fillRect(R(x - ww), FY + 1 + j, ww * 2, 1); } }
+function burst(x, y, k, col){ if (k <= 0 || k >= 1) return; const n = 10; for (let i = 0; i < n; i++){ const a = i / n * Math.PI * 2 + hash(i) * .6, r0 = 4 + k * 22 * (.6 + hash(i + 3) * .6), r1 = r0 + 7 * (1 - k);
+    pline(x + Math.cos(a) * r0, y + Math.sin(a) * r0, x + Math.cos(a) * r1, y + Math.sin(a) * r1, i % 2 ? col : '#ffffff', 2); }
+  b.globalAlpha = 1 - k; disc(x, y, R(3 + k * 8), '#ffffff'); b.globalAlpha = 1; }
+function dust(x, y, k, col = '#cbb78a'){ if (k <= 0 || k >= 1) return; for (let i = 0; i < 7; i++){ const dx = (hash(i) - .5) * 40 * k, dy = -k * 14 * hash(i + 4); b.globalAlpha = 1 - k; disc(x + dx, y + dy, R(2 + k * 3), col); } b.globalAlpha = 1; }
+function shieldFx(x, y, dir, k, big){ if (k <= 0 || k >= 1) return; b.globalAlpha = Math.sin(k * Math.PI) * .9 + .1; const rr = big ? 34 : 22;
+  for (let a = -1.1; a <= 1.1; a += .09){ const px = x + dir * Math.cos(a) * rr, py = y + Math.sin(a) * rr * 1.2; rect(px, py, 2, 2, '#9ff6ff'); }
+  for (let a = -.9; a <= .9; a += .45) pline(x + dir * Math.cos(a) * rr, y + Math.sin(a) * rr * 1.2, x + dir * Math.cos(a) * (rr - 8), y + Math.sin(a) * (rr - 8) * 1.2, '#5ad8ff'); b.globalAlpha = 1; }
+
+// attack animation: q in 0..1 (hit lands at q = .6). A and T are the sprite centres; mz = muzzle.
+function moveFx(mv, A, T, mz, q, dir, t, bt){
+  const col = tcol(mv.t), k6 = clamp(q / .6), after = (q - .6) / .4;
+  switch (mv.fx){
+    case 'ball': if (q < .6){ for (let i = 5; i >= 0; i--){ const k = clamp(k6 - i * .05); disc(lerp(mz.x, T.x, k), lerp(mz.y, T.y, k), Math.max(1, 6 - i), i % 2 ? '#ffffff' : col); } } break;
+    case 'beam': if (q > .08 && q < .78){ const e = Math.min(1, (q - .08) / .5), jx = (hash(Math.floor(t * 30)) - .5) * 2;
+      pline(mz.x, mz.y, lerp(mz.x, T.x, e), lerp(mz.y, T.y, e) + jx, col, 7); pline(mz.x, mz.y, lerp(mz.x, T.x, e), lerp(mz.y, T.y, e) + jx, '#ffffff', 3); disc(mz.x, mz.y, 6, '#ffffff'); } break;
+    case 'stream': if (q > .05 && q < .85){ const e = (q - .05) / .5; for (let i = 0; i < 30; i++){ const k = i / 30; if (k > e) break; const x = lerp(mz.x, T.x, k), y = lerp(mz.y, T.y, k) - Math.sin(k * Math.PI) * 22 + Math.sin(k * 20 + t * 30) * 1.5;
+      rect(x, y, 4, 4, i % 3 ? '#5ea8ff' : '#e9f6ff'); } } break;
+    case 'leaf': if (q > .05 && q < .75){ const e = (q - .05) / .55; for (let i = 0; i < 14; i++){ const k = clamp(e - i * .035); if (k <= 0 || k >= 1) continue;
+      const x = lerp(mz.x, T.x, k), y = lerp(mz.y, T.y, k) + Math.sin(k * 14 + i) * 12; rect(x, y, 4, 2, i % 2 ? '#7cd857' : '#3ea84a'); rect(x + 1, y - 1, 2, 1, '#c2f08a'); } } break;
+    case 'psy': for (let j = 0; j < 4; j++){ const k = clamp((q - .04) / .55 - j * .13); if (k > 0 && k < 1) { const r = 5 + k * 10; ring(lerp(mz.x, T.x, k), lerp(mz.y, T.y, k), R(r), j % 2 ? '#ffffff' : col); ring(lerp(mz.x, T.x, k), lerp(mz.y, T.y, k), R(r) + 1, col); } }
+      if (q > .5 && q < .9){ ring(T.x, T.y, R(6 + (q - .5) * 50), col); } break;
+    case 'slash': if (q > .52 && q < .95){ const k = (q - .52) / .43; for (let i = 0; i < 3; i++){ const e = clamp(k * 1.6 - i * .25); if (e <= 0) continue; const x0 = T.x - 14 + i * 7, y0 = T.y - 16;
+      pline(x0, y0, lerp(x0, x0 + 14, e), lerp(y0, y0 + 32, e), col, 3); pline(x0, y0, lerp(x0, x0 + 14, e), lerp(y0, y0 + 32, e), '#ffffff', 1); } } break;
+    case 'rocks': for (let i = 0; i < 6; i++){ const k = clamp((q - .08 - i * .06) / .28); if (k <= 0 || k >= 1) continue; const x = T.x + (i - 2.5) * 9, y = lerp(-10, T.y + (i % 2) * 6, k * k);
+      b.fillStyle = '#7b6a4a'; b.fillRect(R(x - 3), R(y - 3), 7, 7); b.fillStyle = '#b8a038'; b.fillRect(R(x - 3), R(y - 3), 7, 2); b.fillStyle = '#4a3d2a'; b.fillRect(R(x - 3), R(y + 3), 7, 1); }
+      if (q > .4) dust(T.x, FY, clamp((q - .4) / .5)); break;
+    case 'quake': if (q > .08 && q < .85){ const e = clamp((q - .08) / .45); let px = mz.x, py = FY + 2; for (let i = 1; i <= 14; i++){ const k = i / 14; if (k > e) break; const nx = lerp(mz.x, T.x, k), ny = FY + 2 + (hash(i * 7) - .5) * 5; pline(px, py, nx, ny, '#0b0a1c', 2); px = nx; py = ny; }
+      dust(lerp(mz.x, T.x, e), FY, (q * 3) % 1); if (q > .5) dust(T.x, FY, clamp((q - .5) / .4)); } break;
+    case 'swarm': if (q > .55 && q < .85){ for (let i = 0; i < 3; i++) zap(T.x + (i - 1) * 16, 0, T.x + (i - 1) * 5, T.y, Math.floor(t * 24) + i * 7, '#fff7a8', 3);
+      zap(T.x + 2, 0, T.x, T.y, Math.floor(t * 24) + 91, '#ffffff', 1); } break;
+    case 'boom': break;
+  }
+  if (mv.fx !== 'boom' && q > .6) burst(T.x, T.y, after, col);
+}
+
+/* ================= TIMELINE: turn the simulated battle into timed scenes ================= */
+const SEED = 1429;               // picked by searching seeds: a long fight with a 1-HP finish; replays identically every time
+const SIM = simulate(SEED);
+const BEATS = []; let DUR = 0;
+function add(o, d){ o.t0 = DUR; o.dur = d; DUR += d; BEATS.push(o); return o; }
+const who = (st, side) => { const idx = st.act[side], id = TEAMS[side][idx], m = st.mega[side] && idx === 5; return { id, m, name:(m ? SP[id].mega : SP[id]).name }; };
+add({ k:'title' }, 4.5); add({ k:'teams' }, 7);
+for (const e of SIM.ev){
+  if (e.k === 'challenge') add(e, 2.6);
+  else if (e.k === 'send2') add(e, 3.2);
+  else if (e.k === 'send') add(e, 2.1);
+  else if (e.k === 'faint') add(e, 1.7);
+  else if (e.k === 'mega') add(e, 5.2);
+  else if (e.k === 'end') add(e, 10);
+  else if (e.k === 'move'){
+    const mv = e.mv = MV[e.key], a = who(e.st, e.side), d = who(e.st, 1 - e.side), p = [];
+    e.l1 = `${a.name} used ${mv.n}!`;
+    if (e.d === 0 && e.e === 0) p.push(`It doesn't affect ${d.name}...`);
+    else { if (e.crit) p.push('A critical hit!'); if (e.e > 1) p.push("It's super effective!"); else if (e.e < 1) p.push("It's not very effective..."); }
+    e.l2 = p.join(' ');
+    e.ATK = mv.fx === 'swarm' ? 1.4 : mv.fx === 'boom' ? 1.5 : .85; e.tA = .55; e.tH = e.tA + e.ATK * .6;
+    add(e, Math.max(e.tA + e.ATK, e.tH + .55) + (e.l2 ? 1.05 : .5));
+  }
+}
+function beatAt(t){ let lo = 0; for (let i = 0; i < BEATS.length; i++){ if (BEATS[i].t0 <= t) lo = i; else break; } return BEATS[lo]; }
+
+/* ================= SCENES ================= */
+const LXT = 24, RXT = 296, TFY = 126;
+function drawTrainer(side, pose, T, dx = 0, dy = 0, sc = 1){
+  const c = trainerCanvas(side, pose, T);
+  b.save(); b.translate(R((side ? RXT : LXT) + dx), R(TFY + dy + 2)); b.scale(side ? -sc : sc, sc); b.drawImage(c, -15, -44); b.restore();
+}
+function veil(a, col = '5,5,20'){ b.fillStyle = `rgba(${col},${a})`; b.fillRect(0, 0, BW, BH); }
+
+function sceneTitle(T, u){
+  drawBG(T); veil(.5);
+  const sl = eOut(seg(u, 0, .9));
+  b.save(); b.translate(R((1 - sl) * -80), 0); b.scale(2, 2); b.drawImage(trainerCanvas(0, 0, T), 1, 36); b.restore();
+  b.save(); b.translate(R(320 + (1 - sl) * 80), 0); b.scale(-2, 2); b.drawImage(trainerCanvas(1, 0, T), 1, 36); b.restore();
+  const pop = eOut(seg(u, .3, 1.0));
+  pxText('KAI', 160 - 64 * pop, 28, '#ffe45a', 3, 'center', '#050510'); pxText('VS', 160, 32, '#ffffff', 2, 'center', '#050510'); pxText('ORIN', 160 + 64 * pop, 28, '#7ad6ff', 3, 'center', '#050510');
+  if (u > 1.1){ pxText('FULL 6V6 BATTLE', 160, 66, '#ffffff', 2, 'center', '#050510'); }
+  if (u > 1.6){ pxText('COMET FALLS CAVE', 160, 86, '#c9c4ff', 1, 'center', '#050510'); }
+  if (u > 2.2){ box(4, 144, 312, 33); pxText('SAMPLE ANIMATION - ORIGINAL FICTIONAL CREATURES', 160, 151, '#ffe9a8', 1, 'center'); pxText('BATTLE IS SIMULATED: BOTH TRAINERS THINK ALONE.', 160, 163, '#ffffff', 1, 'center'); }
+}
+function sceneTeams(T, u){
+  drawBG(T); veil(.72);
+  for (let s = 0; s < 2; s++){
+    const x0 = s ? 161 : 3, st0 = s * 3;
+    pxText(TRAINER[s].name + "'S TEAM", x0 + 78, 6, s ? '#7ad6ff' : '#ffe45a', 2, 'center', '#050510');
+    TEAMS[s].forEach((id, i) => {
+      const a = seg(u, .3 + i * .3 + st0, .6 + i * .3 + st0); if (a <= 0) return;
+      const d = SP[id], cx = x0 + (i % 2) * 80, cy = 21 + R(((1 - a) * -8)) + ((i / 2) | 0) * 42;
+      b.globalAlpha = a; box(cx, cy, 76, 40);
+      pxText(d.name, cx + 38, cy + 4, '#ffffff', 1, 'center');
+      const c = monCanvas(id, false, T), sc = 1 / Math.ceil(Math.max(d.w / 36, d.h / 24)), w = d.w * sc, h = d.h * sc;
+      b.imageSmoothingEnabled = false; b.drawImage(c, cx + 3 + (36 - w) / 2 | 0, cy + 12 + (24 - h) / 2 | 0, R(w), R(h));
+      chips([d.types[0]], cx + 44, cy + 13); if (d.types[1]) chips([d.types[1]], cx + 44, cy + 23);
+      b.globalAlpha = 1;
+    });
+  }
+  if (u > 5.2){ pxText('BULWHALE IS 14.5 M LONG. THE REST ARE 0.7-2.1 M.', 160, 152, '#ffe9a8', 1, 'center', '#050510'); pxText('SAME LEVEL. REAL STATS AND TYPE MATCHUPS DECIDE IT.', 160, 164, '#ffffff', 1, 'center', '#050510'); }
+}
+
+function sceneBattle(T, bt, u){
+  const st = bt.st, k = bt.k;
+  drawBG(T);
+  const sel = [0, 1].map(s => { const idx = st.act[s], id = TEAMS[s][idx]; return { s, id, mega:st.mega[s] && idx === 5, show:st.vis[s], o:{}, hp:st.hp[s][idx], hud:st.vis[s] }; });
+  let l1 = '', l2 = '', p1 = 1, p2 = 1, shx = 0, shy = 0, flashA = 0, flashC = '255,255,255', after = null, poses = [0, 0], tdx = [0, 0], tdy = [0, 0];
+  const tw = (u0, s) => clamp((u - u0) * 45 / Math.max(1, s.length));
+  const sup = n => `${TRAINER[n].name} sends out ${who(st, n).name}!`;
+
+  if (k === 'challenge'){
+    sel.forEach(e => { e.show = false; e.hud = false; });
+    const sl = eOut(seg(u, 0, 1)); tdx = [-(1 - sl) * 70, (1 - sl) * 70];
+    l1 = 'Champion ORIN wants to battle!'; p1 = tw(.7, l1);
+  } else if (k === 'send2' || k === 'send'){
+    const sides = k === 'send2' ? [0, 1] : [bt.side];
+    sides.forEach(n => {
+      const e = sel[n], v = u - (k === 'send2' ? 0 : 0);
+      poses[n] = (u > .1 && u < .45) ? 1 : 0; e.show = u >= .6; e.hud = u > .95;
+      e.o = { sc:lerp(.3, 1, eOut(seg(u, .6, .95))), flash:1 - seg(u, .6, 1.05) };
+    });
+    if (k === 'send2'){ l1 = sup(0); l2 = sup(1); p1 = tw(.1, l1); p2 = tw(1.0, l2); } else { l1 = sup(bt.side); p1 = tw(.1, l1); }
+    after = () => sides.forEach(n => {
+      const e = sel[n], sp = spot(n, e.id, e.mega, T), tx = sp.x, ty = FY - sp.h * .5, kk = seg(u, .15, .6);
+      if (kk > 0 && kk < 1){ const bx = lerp(n ? 280 : 40, tx, kk), by = lerp(100, ty, kk) - Math.sin(kk * Math.PI) * 34; disc(bx, by, 4, '#050510'); disc(bx, by, 3, '#ff4a4a'); rect(bx - 3, by, 7, 1, '#ffffff'); }
+      const f = seg(u, .55, .85); if (f > 0 && f < 1){ b.globalAlpha = 1 - f; disc(tx, ty, R(8 + f * Math.max(18, sp.h * .5)), '#ffffff'); b.globalAlpha = 1; }
+    });
+  } else if (k === 'faint'){
+    const e = sel[bt.side]; e.o = { dis:seg(u, .25, 1.0), dy:seg(u, .25, 1) * 8 }; e.show = u < 1.0;
+    const nm = who(st, bt.side).name; l1 = `${nm} fainted!`; p1 = tw(.2, l1);
+  } else if (k === 'mega'){
+    const glow = u > 1.3 && u < 3.4;
+    sel.forEach(e => { if (u >= 3.4) e.mega = true; if (glow) e.o = { tc:`hsl(${(u * 300 + e.s * 120) % 360},95%,70%)`, ta:.35 + .35 * Math.sin(u * 12) }; });
+    if (u < 1.3){ l1 = 'THE FINAL DUEL!'; l2 = 'Both aces are ready to Mega Evolve!'; p1 = tw(.2, l1); p2 = tw(.6, l2); }
+    else if (u < 3.4){ l1 = 'Power surges through the Mega Cores!'; p1 = tw(1.3, l1); }
+    else { l1 = `${SP[sel[0].id].mega.name} and ${SP[sel[1].id].mega.name}!`; p1 = tw(3.5, l1); }
+    after = () => { if (u > 1.3 && u < 3.6) for (let s = 0; s < 2; s++){ const sp = spot(s, sel[s].id, sel[s].mega, T), cx = sp.x, cy = FY - sp.h * .5;
+        for (let i = 0; i < 14; i++){ const a = i / 14 * Math.PI * 2 + u * 3 * (i % 2 ? 1 : -1), r = (22 + hash(i) * 20 + sp.w * .25) * (1 - .3 * seg(u, 2.4, 3.4)); rect(cx + Math.cos(a) * r, cy + Math.sin(a) * r * .8, 3, 3, `hsl(${(i * 26 + u * 240) % 360},95%,68%)`); } } };
+    flashA = u < 3.0 ? 0 : u < 3.4 ? seg(u, 3.0, 3.4) : 1 - seg(u, 3.4, 4.1);
+  } else if (k === 'end'){
+    const w = bt.winner, e = sel[1 - w]; e.show = false; e.hud = false; sel[w].hud = u < 3.6; sel[w].o = { dy:-Math.abs(Math.sin(u * 5)) * 5 }; poses[w] = 1; tdy[w] = -Math.abs(Math.sin(u * 6)) * 4;
+    const nm = who(st, w).name; l1 = `${TRAINER[w].name} defeated ${TRAINER[1 - w].title.length ? 'Champion ' + TRAINER[1 - w].name : TRAINER[1 - w].name}!`; p1 = tw(.3, l1);
+    l2 = `${nm} finished with ${st.hp[w][st.act[w]]} HP left!`; p2 = tw(1.6, l2);
+  } else if (k === 'move'){
+    const s = bt.side, tg = 1 - s, A = sel[s], D = sel[tg], mv = bt.mv, dir = s ? -1 : 1, q = clamp((u - bt.tA) / bt.ATK), h = u - bt.tH;
+    const sa = spot(s, A.id, A.mega, T), sd = spot(tg, D.id, D.mega, T);
+    // text
+    l1 = bt.l1; p1 = tw(0, l1); l2 = bt.l2; p2 = tw(bt.tH + .55, l2); if (u < bt.tH + .55) l2 = '';
+    // attacker motion
+    let adx = 0, ady = 0, asc = 1;
+    if (u > bt.tA - .25 && u < bt.tA) ady = 1;
+    if (mv.c && u > bt.tA){ const reach = Math.max(10, Math.abs(sd.x - sa.x) - (sa.w * .5 + sd.w * .5) * .75);
+      const kk = q < .3 ? -eOut(q / .3) * .12 : q < .6 ? lerp(-.12, 1, eIO((q - .3) / .3)) : lerp(1, 0, eIO((q - .6) / .4)); adx = dir * reach * kk; }
+    else if (mv.fx === 'boom'){ asc = 1 + .5 * seg(q, 0, .5) + .05 * Math.sin(u * 40); A.o.flash = q < .55 ? (Math.floor(u * 14) % 2 ? .7 : 0) : 0; }
+    else if (u > bt.tA && q < 1) adx = -dir * Math.sin(Math.min(1, q * 2) * Math.PI) * 3;
+    A.o.dx = adx; A.o.dy = ady; A.o.sc = asc;
+    // defender reaction
+    if (h > 0 && h < .55 && bt.d > 0){ D.o.flash = Math.floor(h * 22) % 2 ? .85 : 0; D.o.dx = SP[D.id].shield ? 0 : dir * 4 * (1 - h / .55); }
+    // hp bars
+    const e = eOut(seg(u, bt.tH, bt.tH + .55)); D.hp = lerp(st.hp[tg][st.act[tg]], bt.hp1, e); if (bt.selfKO) A.hp = lerp(st.hp[s][st.act[s]], 0, e);
+    // shake
+    if (mv.fx === 'quake' && q > .15 && q < .9){ shx = (Math.floor(u * 30) % 2 ? 2 : -2); shy = 0; }
+    if (mv.fx === 'boom' && q > .6){ const f = 1 - seg(q, .6, 1); shx = R((hash(Math.floor(u * 40)) - .5) * 8 * f); shy = R((hash(Math.floor(u * 40) + 5) - .5) * 8 * f); }
+    else if (h > 0 && h < .35 && bt.d > 0){ const amp = bt.d > hpMax(D.id) * .4 ? 2 : 1; shx = Math.floor(h * 40) % 2 ? amp : -amp; }
+    if (mv.fx === 'boom') flashA = q < .5 ? 0 : q < .65 ? seg(q, .5, .65) : 1 - seg(q, .65, 1);
+    if (mv.fx === 'swarm' && q > .5 && q < .75) flashA = .18 * (Math.floor(u * 30) % 2);
+    if (mv.fx === 'swarm' && bt.e > 1 && false) flashA = 0;
+    after = () => {
+      const ac = { x:sa.x + adx, y:sa.y - sa.h * .5 + ady }, tc = { x:sd.x, y:sd.y - sd.h * .5 }, mz = { x:ac.x + dir * sa.w * .42, y:ac.y - sa.h * .08 };
+      if (u > bt.tA){
+        if (mv.fx === 'swarm'){
+          for (let i = 0; i < 3; i++){ const kk = eIO(clamp((q - .1 - i * .05) / .45)); if (kk <= 0 || q > .6) continue;
+            const lane = (i - 1) * 15; drawMon(s, A.id, A.mega, T, { dx:dir * (sd.x - sa.x) * kk * .85, dy:lane * Math.sin(kk * Math.PI), a:.8, tc:'#ffe84a', ta:.75 });
+            if (kk > .1 && i < 2) zap(sa.x + dir * (sd.x - sa.x) * kk * .85, sa.y - sa.h * .5 + lane * Math.sin(kk * Math.PI), sa.x + dir * (sd.x - sa.x) * eIO(clamp((q - .1 - (i + 1) * .05) / .45)) * .85, sa.y - sa.h * .5 + (i) * 7, Math.floor(u * 24) + i, '#fff7a8', 2); }
+        }
+        if (mv.fx === 'boom'){ if (q > .5){ const f = seg(q, .5, .8); b.globalAlpha = 1 - seg(q, .75, 1); disc(ac.x, ac.y, R(f * 280), '#fff6d0'); disc(ac.x, ac.y, R(f * 200), '#ffb347'); b.globalAlpha = 1; burst(tc.x, tc.y, seg(q, .55, 1), '#ff9a3c'); } }
+        moveFx(mv, ac, tc, mz, q, dir, T, bt);
+        if (SP[D.id].shield && h > -.12 && h < .6 && bt.d >= 0 && mv.fx !== 'swarm' || (SP[D.id].shield && mv.fx === 'swarm' && h > 0 && h < .6)) shieldFx(sd.x - dir * sd.w * .42, tc.y, -dir, clamp((h + .12) / .72), sd.w > 100);
+      }
+    };
+  }
+
+  // ----- draw world (shaken) -----
+  b.save(); b.translate(shx, shy);
+  if (k === 'send' || k === 'send2' || true){ drawTrainer(0, poses[0], T, tdx[0], tdy[0]); drawTrainer(1, poses[1], T, tdx[1], tdy[1]); }
+  sel.forEach(e => { if (e.show){ const sp = spot(e.s, e.id, e.mega, T); shadow(sp.x, sp.w * (e.o.sc || 1)); } });
+  sel.forEach(e => { if (e.show && (k !== 'move' || e.s !== bt.side)) drawMon(e.s, e.id, e.mega, T, e.o); });
+  if (k === 'move' && sel[bt.side].show) drawMon(bt.side, sel[bt.side].id, sel[bt.side].mega, T, sel[bt.side].o);
+  if (after) after();
+  b.restore();
+  if (flashA > 0){ b.globalAlpha = clamp(flashA); rect(0, 0, BW, BH, '#ffffff'); b.globalAlpha = 1; }
+
+  // ----- HUD + text -----
+  if (k !== 'end' || u < 99){ sel.forEach(e => { if (e.hud) hud(e.s, e.id, e.mega, e.hp, st); }); }
+  if (k === 'move' || k === 'send' || k === 'send2' || k === 'faint'){ const t = pxText; }
+  if (k !== 'challenge' || true){ if (k !== 'end' || u < 3.5) dialog(l1, l2, p1, p2); }
+  if (k === 'end'){
+    veil(.68 * seg(u, 3.5, 4.3));
+    if (u > 3.8){ const w = bt.winner, a = eOut(seg(u, 3.8, 4.5));
+      pxText(TRAINER[w].name.toUpperCase() + ' WINS!', 160, 40 - (1 - a) * 20, w ? '#7ad6ff' : '#ffe45a', 4, 'center', '#050510');
+      const nm = who(st, w).name, hp = st.hp[w][st.act[w]];
+      pxText(`${nm} WON WITH ${hp} HP LEFT!`, 160, 80, '#ffffff', 1, 'center', '#050510');
+      pxText(`${SIM.turns} TURNS  ${SIM.ev.filter(x => x.k === 'faint').length} KNOCKOUTS`, 160, 94, '#c9c4ff', 1, 'center', '#050510'); }
+    if (u > 5.2){ box(4, 144, 312, 33); pxText('ORIGINAL FICTIONAL CREATURES. NOT POKEMON.', 160, 151, '#ffe9a8', 1, 'center'); pxText('EVERY FRAME IS DRAWN IN CODE.', 160, 163, '#ffffff', 1, 'center'); }
+  }
+  if (k === 'mega' && u > 3.4 && u < 4.2){ /* the Mega names appear on the HUDs */ }
+}
+// the HUD / dialog for the end card is drawn above; the line below is only a guard if a beat has no case
+const sceneFor = { title:sceneTitle, teams:sceneTeams };
+
+/* ================= render + playback ================= */
+function render(T){
+  b.imageSmoothingEnabled = false;
+  const bt = beatAt(T), u = T - bt.t0;
+  if (sceneFor[bt.k]) sceneFor[bt.k](T, u); else sceneBattle(T, bt, u);
+  if (T < .5) veil(1 - T / .5, '0,0,0'); if (T > DUR - .6) veil((T - (DUR - .6)) / .6, '0,0,0');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buf, 0, 0, cv.width, cv.height);
+  const s = cv.height / BH; ctx.fillStyle = 'rgba(0,0,0,.12)';
+  for (let y = 0; y < BH; y++) ctx.fillRect(0, R(y * s + s * .75), cv.width, Math.max(1, R(s * .25)));
+}
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(innerWidth / BW, innerHeight / BH) * .98;
+  cv.style.width = BW * k + 'px'; cv.style.height = BH * k + 'px';
+  cv.width = R(BW * k * dpr); cv.height = R(BH * k * dpr);
+}
+let T = 0, playing = true, last = null;
+function tick(now){ if (last === null) last = now; const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing) T = (T + dt) % DUR; render(T); requestAnimationFrame(tick); }
+cv.addEventListener('click', () => playing = !playing);
+addEventListener('keydown', e => { if (e.key === ' '){ e.preventDefault(); playing = !playing; } });
+addEventListener('resize', () => { resize(); render(T); });
+buildBG();
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+if (!isNaN(qt)){ T = clamp(qt, 0, DUR - .001); playing = false; }
+window.renderAt = t => { T = t; playing = false; render(T); };
+window.DUR = DUR; window.BEATS = BEATS; window.SIM = SIM;
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
