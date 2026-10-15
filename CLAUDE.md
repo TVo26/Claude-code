@@ -28,6 +28,7 @@ The owner is not a developer and makes YouTube videos. Explain in plain words an
 | `samples/style-reel.html` | 25 styles × 4 s | one quick version of each style (`s01`–`s25`) |
 | `samples/rea-reverse-engineer-anything.html` | 40 s pastel explainer on REA (Robo) | 8-scene layout, `win()`, `toolbox()`, `crate()`, `magnifier()`, `envelope()` |
 | `samples/japan-campaign-tech-tree.html` | Interactive pastel tech tree of the Japan script (click a tech for its card) | `NODES` / `ERAS` data, `edge()`, `card()` popup, hover + click handling |
+| `samples/japan-orbit-zoom.html` (+ `.mp4`) | 16 s code-drawn globe: orbit, zoom to Japan, tilt. Real 3D camera, Natural Earth coastlines (public domain), `?clean=1` hides UI | `camera()`, `ringPaths()` (horizon clipping), `silhouette()`, embedded `LAND` coastline data |
 
 The pixel font `G` and `LAND` are copied into several files; when building a new file, splice them in from `samples/pixel-map-voyage.html`.
 
