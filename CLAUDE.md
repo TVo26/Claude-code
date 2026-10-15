@@ -26,6 +26,8 @@ The owner is not a developer and makes YouTube videos. Explain in plain words an
 | `samples/oregon-trail.html` | 60 s pixel story (man, ox, wagon) | `man()` with poses, `ox()`, `wagon()`, `caravan()`, parchment trail map, `tiltBlit()` for slopes |
 | `samples/ink-brush-haiku.html` | Ink / sumi-e brush | `brush()` stroke, `blob()`, `wash()`, paper texture |
 | `samples/style-reel.html` | 25 styles × 4 s | one quick version of each style (`s01`–`s25`) |
+| `samples/rea-reverse-engineer-anything.html` | 40 s pastel explainer on REA (Robo) | 8-scene layout, `win()`, `toolbox()`, `crate()`, `magnifier()`, `envelope()` |
+| `samples/japan-campaign-tech-tree.html` | Interactive pastel tech tree of the Japan script (click a tech for its card) | `NODES` / `ERAS` data, `edge()`, `card()` popup, hover + click handling |
 
 The pixel font `G` and `LAND` are copied into several files; when building a new file, splice them in from `samples/pixel-map-voyage.html`.
 

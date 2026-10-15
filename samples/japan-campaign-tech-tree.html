@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Japan: The Long Campaign (tech tree)</title>
+<style>
+  html,body{margin:0;height:100%;background:#ece5da;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;border-radius:12px;box-shadow:0 12px 40px rgba(80,60,90,.18);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="An interactive, hand-drawn tech tree of Japanese history in eight eras, built from the Japan Long Campaign gamified script. Click any tech to read its card."></canvas>
+<script>
+'use strict';
+/* Japan: The Long Campaign, as an interactive tech tree. Every frame is drawn with Canvas 2D; no images, no libs.
+   Controls: click a tech = open its card · space = pause · 1–8 = jump to an era · R = restart · ← → seek 2 s
+             ?t=12.5 opens paused at that time · ?node=taiho opens a card */
+const W = 1280, H = 720;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let K = 1;
+
+const P = {
+  paper:'#fbf6ec', ink:'#4a4453', inkSoft:'#8a8294',
+  red:'#f2837b', redD:'#d9665f', pink:'#f9c9d2', pinkL:'#fde8ec',
+  blue:'#a9d6f2', blueL:'#e3f2fc', green:'#a8dca0', greenD:'#6fae73', greenL:'#e3f5df',
+  yellow:'#fbe39a', yellowL:'#fff5d1', purple:'#cdb8ee', purpleL:'#efe6fb',
+  orange:'#fbc79a', orangeL:'#feecdc', mint:'#aee8d6', mintL:'#e2f7f0',
+  gray:'#e2dcd2', grayD:'#b1a9a0'
+};
+const SCOL = ['#f9b8c4','#cdb8ee','#a9d6f2','#a8dca0','#fbe39a','#fbc79a','#d9c2f0','#aee8d6','#c7e59a','#f2837b'];
+const FONT = '"Comic Sans MS","Comic Neue","Chalkboard SE","Marker Felt","Segoe Print",cursive';
+const MONO = '"Courier New",ui-monospace,monospace';
+
+/* ---------- math + seeded jitter (the "boil" of a hand-drawn line) ---------- */
+let seed = 1;
+function R(){ seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+const J = a => (R() * 2 - 1) * a;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const back = t => { if (t <= 0) return 0; const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const TAU = Math.PI * 2;
+
+function withA(a, fn){ if (a <= 0) return; const g = ctx.globalAlpha; ctx.globalAlpha = g * Math.min(1, a); fn(); ctx.globalAlpha = g; }
+
+/* ---------- sketchy primitives ---------- */
+function subdiv(pts, closed, maxL){
+  const out = [], n = pts.length, m = closed ? n : n - 1;
+  for (let i = 0; i < m; i++){
+    const a = pts[i], b = pts[(i + 1) % n]; out.push(a);
+    const k = Math.floor(Math.hypot(b[0] - a[0], b[1] - a[1]) / maxL);
+    for (let j = 1; j <= k; j++){ const u = j / (k + 1); out.push([lerp(a[0], b[0], u), lerp(a[1], b[1], u)]); }
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
+}
+function trace(pts, closed, amp){
+  const q = pts.map(p => [p[0] + J(amp), p[1] + J(amp)]), n = q.length;
+  ctx.beginPath();
+  if (closed){
+    let m = [(q[n-1][0] + q[0][0]) / 2, (q[n-1][1] + q[0][1]) / 2]; ctx.moveTo(m[0], m[1]);
+    for (let i = 0; i < n; i++){ const b = q[(i + 1) % n]; m = [(q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2]; ctx.quadraticCurveTo(q[i][0], q[i][1], m[0], m[1]); }
+    ctx.closePath();
+  } else {
+    ctx.moveTo(q[0][0], q[0][1]);
+    for (let i = 1; i < n - 1; i++){ const b = q[i + 1]; ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + b[0]) / 2, (q[i][1] + b[1]) / 2); }
+    ctx.lineTo(q[n-1][0], q[n-1][1]);
+  }
+}
+function bbox(pts){ let a = 1e9, b = 1e9, c = -1e9, d = -1e9; for (const p of pts){ a = Math.min(a, p[0]); b = Math.min(b, p[1]); c = Math.max(c, p[0]); d = Math.max(d, p[1]); } return [a, b, c, d]; }
+function hatch(x0, y0, x1, y1, c, gap = 9){
+  const g = ctx.globalAlpha; ctx.globalAlpha = g * .3; ctx.strokeStyle = c; ctx.lineWidth = 1.3; ctx.beginPath();
+  for (let d = x0 - (y1 - y0); d < x1; d += gap){ ctx.moveTo(d + J(1), y1 + J(1)); ctx.lineTo(d + (y1 - y0) + J(1), y0 + J(1)); }
+  ctx.stroke(); ctx.globalAlpha = g;
+}
+function shape(pts, o = {}){
+  const closed = o.closed !== false, amp = o.amp ?? 1.2, w = o.w ?? 2.2;
+  if (o.fill){ ctx.fillStyle = o.fill; trace(pts, closed, amp * .4); ctx.fill(); }
+  if (o.hatch){ const b = bbox(pts); ctx.save(); trace(pts, closed, 0); ctx.clip(); hatch(b[0], b[1], b[2], b[3], o.hatch, o.gap || 9); ctx.restore(); }
+  if (o.stroke !== null){
+    ctx.strokeStyle = o.stroke || P.ink; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (o.dash) ctx.setLineDash(o.dash);
+    ctx.lineWidth = w; trace(pts, closed, amp); ctx.stroke();
+    const g = ctx.globalAlpha; ctx.globalAlpha = g * .45; ctx.lineWidth = w * .6; trace(pts, closed, amp * 1.8); ctx.stroke(); ctx.globalAlpha = g;
+    ctx.setLineDash([]);
+  }
+}
+function rrPts(x, y, w, h, r){
+  r = Math.max(2, Math.min(r, w / 2, h / 2)); const pts = [];
+  const cs = [[x + w - r, y + r, -Math.PI / 2], [x + w - r, y + h - r, 0], [x + r, y + h - r, Math.PI / 2], [x + r, y + r, Math.PI]];
+  for (const [cx, cy, a0] of cs) for (let i = 0; i <= 3; i++){ const a = a0 + i / 3 * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  return subdiv(pts, true, 55);
+}
+function ellPts(cx, cy, rx, ry, n){ n = n || Math.max(12, Math.min(32, Math.round((rx + ry) * .35))); const p = []; for (let i = 0; i < n; i++){ const a = i / n * TAU; p.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]); } return p; }
+const rect = (x, y, w, h, o = {}) => shape(rrPts(x, y, w, h, o.r ?? 8), o);
+const circ = (cx, cy, r, o = {}) => shape(ellPts(cx, cy, r, o.ry ?? r), o);
+const poly = (pts, o = {}) => shape(subdiv(pts, false, o.seg || 40), { ...o, closed:false });
+function line(x1, y1, x2, y2, c = P.ink, w = 2.2){
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1, nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+  ctx.strokeStyle = c; ctx.lineCap = 'round'; const g = ctx.globalAlpha;
+  for (let p = 0; p < 2; p++){
+    ctx.lineWidth = p ? w * .55 : w; ctx.globalAlpha = p ? g * .5 : g;
+    const bow = J(1) * Math.min(3, len * .03), ax = x1 + J(1), ay = y1 + J(1), bx = x2 + J(1), by = y2 + J(1);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2 + nx * bow, (ay + by) / 2 + ny * bow, bx, by); ctx.stroke();
+  }
+  ctx.globalAlpha = g;
+}
+function arrow(x1, y1, x2, y2, c = P.ink, w = 2.2, p = 1, dash){
+  if (p <= 0) return; const ex = lerp(x1, x2, p), ey = lerp(y1, y2, p);
+  poly([[x1, y1], [ex, ey]], { stroke:c, w, dash, amp:.8 });
+  const a = Math.atan2(ey - y1, ex - x1), L = 12;
+  line(ex, ey, ex - Math.cos(a - .45) * L, ey - Math.sin(a - .45) * L, c, w);
+  line(ex, ey, ex - Math.cos(a + .45) * L, ey - Math.sin(a + .45) * L, c, w);
+}
+function txt(s, x, y, size = 20, c = P.ink, align = 'center', bold = false, font = FONT){
+  ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; ctx.fillStyle = c; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+function txtW(s, size, bold = false, font = FONT){ ctx.font = `${bold ? 'bold ' : ''}${size}px ${font}`; return ctx.measureText(s).width; }
+function bubble(x, y, s, tx, ty, size = 18){
+  const w = txtW(s, size, true) + 30, h = size + 20;
+  rect(x - w / 2, y - h / 2, w, h, { fill:'#fff', r:h / 2, w:2 });
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x - 10, y + h / 2 - 4); ctx.lineTo(tx, ty); ctx.lineTo(x + 10, y + h / 2 - 4); ctx.fill();
+  line(x - 10, y + h / 2 - 1, tx, ty, P.ink, 2); line(x + 10, y + h / 2 - 1, tx, ty, P.ink, 2);
+  txt(s, x, y + 1, size, P.ink, 'center', true);
+}
+function star(cx, cy, r1, r2, n, rot, o){ const p = []; for (let i = 0; i < n * 2; i++){ const a = rot + i / (n * 2) * TAU - Math.PI / 2, r = i % 2 ? r2 : r1; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } shape(p, { amp:.6, ...o }); }
+function sparkle(x, y, s, rot = 0){ star(x, y, 12 * s, 3.5 * s, 4, rot, { fill:P.yellow, w:1.6 }); }
+function gear(cx, cy, r, teeth, rot, fill){
+  const p = [], n = teeth * 4;
+  for (let i = 0; i < n; i++){ const a = rot + i / n * TAU, rr = (i % 4 < 2) ? r : r * .78; p.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+  shape(p, { fill, w:2, amp:.5 }); circ(cx, cy, r * .3, { fill:'#fff', w:1.8 });
+}
+function check(x, y, s = 1){ circ(x, y, 11 * s, { fill:P.green, w:1.8 }); poly([[x - 5 * s, y], [x - 1 * s, y + 4 * s], [x + 6 * s, y - 5 * s]], { w:2.6 * s, amp:.3 }); }
+function lock(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = P.ink; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(-10, -10); ctx.arc(0, -10, 10, Math.PI, 0); ctx.lineTo(10, 0); ctx.stroke();
+  rect(-17, -3, 34, 27, { fill:P.yellow, r:6 }); circ(0, 8, 3.5, { fill:P.ink, w:1 }); ctx.restore();
+}
+function leaf(x, y, ang, sz){
+  if (sz < .6) return; ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  shape(ellPts(sz * 1.2, 0, sz * 1.2, sz * .55, 10), { fill:P.green, stroke:P.greenD, w:1.5, amp:.35 });
+  ctx.restore();
+}
+
+/* ---------- frame chrome: paper, stage label, caption, progress ---------- */
+function paper(){
+  ctx.fillStyle = P.paper; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(150,185,215,.15)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let y = 100; y < H; y += 32){ ctx.moveTo(0, y); ctx.lineTo(W, y); } ctx.stroke();
+  const s0 = seed; seed = 4242; ctx.fillStyle = 'rgba(120,100,80,.08)';
+  for (let i = 0; i < 280; i++) ctx.fillRect(R() * W, R() * H, 1 + R() * 1.6, 1 + R() * 1.6);
+  seed = s0;
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * .35, W / 2, H / 2, H * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(130,95,60,.10)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+/* =====================================================================
+   JAPAN: THE LONG CAMPAIGN as a tech tree.
+   Content comes only from the gamified script (Japan_Campaign_Gamified.md).
+   Arrows mean "leads to / needed for" in the script's own words; dashed
+   things are uncertain, inferred or debated. Wars, famine, colonial rule
+   and disasters are left off the board on purpose (the script's house rule).
+   ===================================================================== */
+const NCOL = 8, X0 = 20, CW = 155, NW = 136, NH = 42, Y0 = 204, RH = 52, T0 = 3, ESEC = 5;
+const colX = c => X0 + CW * c + CW / 2;
+
+const TERMS = {
+  'Start location':'Where a player begins and what is nearby: terrain, neighbours, routes. Not destiny.',
+  'Unlock':'Something becomes available. That is different from being widely used: unlocked is not adopted.',
+  'Upkeep':'The recurring cost of keeping something running. It never skips a turn.',
+  'Tech tree':'The web of what leads to what. A network, not a ladder.',
+  'Map control':'The practical ability to use, watch and restrict the places that matter. Not the same as owning every square.',
+  'Prerequisite':'What you need before something new becomes possible.',
+  'Age up':'A transition to a new phase, shown after we have seen what actually changed.',
+  'Counterplay':'A response shaped to answer a specific threat.',
+  'Resource bottleneck':'The one scarce input that limits everything else.',
+  'Power spike':'A sharp jump in strength at a particular moment.',
+  'Build order':'The sequence things get built in. Often only visible as a plan from the replay.',
+  'Timing window':'A short stretch when an opening exists.',
+  'Win condition':'What victory means for this particular player. History has no shared victory screen.',
+  'Tech switch':'Rebuilding what your economy or army runs on, mid-game.',
+  'Snowball':'A lead that feeds itself in a loop.'
+};
+const TKEYS = Object.keys(TERMS), tcol = k => SCOL[(TKEYS.indexOf(k) * 3 + 1) % SCOL.length];
+
+const ERAS = [
+  { n:'Rice, metal, walls',  yrs:'9th c. BCE–3rd c. CE', plate:'LOCAL COMMUNITIES', cap:'Rice, iron and ditches: a strong start location, but unlocked is not adopted.' },
+  { n:'Court levels up',     yrs:'3rd–8th c.',           plate:'YAMATO RULERS → THE COURT', cap:'The court copies the strongest player on the map, and the upkeep gets brutal.' },
+  { n:'Two controllers',     yrs:'12th–14th c.',         plate:'KAMAKURA WARRIOR GOVERNMENT', cap:'Two controllers, one map, and a reward-land bottleneck.' },
+  { n:'Free-for-all',        yrs:'1467–1600',            plate:'DOZENS OF LORDS', cap:'Guns spike the lords who can afford them, then the map is pulled back together.' },
+  { n:'Locking the board',   yrs:'1600–1850s',           plate:'TOKUGAWA SHOGUNATE', cap:'New win condition: stay in charge. The lords pay upkeep on purpose.' },
+  { n:'The speedrun',        yrs:'1853–1911',            plate:'MEIJI OLIGARCHS', cap:'A full tech switch, and someone has to pay for the speedrun.' },
+  { n:'Total war',           yrs:'1931–1945',            plate:'GAME LAYER OFF', cap:'The game layer comes off. No metaphor fits these years.' },
+  { n:'Rebuild',             yrs:'1945–2025',            plate:'OCCUPATION → ELECTED GOVERNMENTS', cap:'Game layer back on, carefully: a snowball, two bottlenecks, and fewer hands.' },
+];
+const DUR = T0 + ESEC * 8 + 5;
+
+/* n: id, e = era, r = row, l = label, yr, terms, text, from = parents, df = dashed parents,
+   dashed = uncertain/debated, replay, note, beat, age */
+const NODES = [
+ {id:'paddy',e:0,r:0,l:'Paddy rice',yr:'c. 9th c. BCE',terms:['Start location','Unlock','Upkeep'],beat:'3–6',
+  text:'Northern Kyushu: people who had fished, hunted and gathered for millennia get paddy rice, with know-how from the Korean Peninsula. Strong start location: a short hop to the mainland, lots of rain, river plains. But unlocked is not adopted: rice spread east unevenly over centuries, mixed in with old ways. The catch is upkeep: channels and dikes need fixing every season.',
+  note:'Paddy upkeep (channels and dikes needing seasonal repair) is general agronomy from the script writer, not a sourced claim.'},
+ {id:'moats',e:0,r:1,l:'Moats\n& ditches',yr:'',terms:[],beat:'8',from:['paddy'],
+  text:'Stored grain makes you a target, so moats go up. Yoshinogari\'s outer ditch runs about two and a half kilometres.'},
+ {id:'tools',e:0,r:2,l:'Better tools',yr:'',terms:['Tech tree'],beat:'7',from:['paddy'],
+  text:'Tech tree check: better paddies want better tools, better tools want iron, and iron comes from across the water.',
+  note:'The script flags this chain as a simplification: early paddies were dug with wooden tools and iron spread later. Needs a reviewer check.'},
+ {id:'iron',e:0,r:3,l:'Iron\n(imported)',yr:'',terms:['Tech tree'],beat:'7',from:['tools'],dashed:true,
+  text:'Iron is the node that comes from across the water: the script shows an import arrow on it.',
+  note:'Part of the simplified chain above. Dashed because the script marks it for review.'},
+ {id:'bronze',e:0,r:4,l:'Bronze\n(bells, mirrors)',yr:'',terms:['Tech tree'],beat:'7',from:['tools'],df:['tools'],dashed:true,
+  text:'A bronze node branches off the same tech web, leading to bells and mirrors.',
+  note:'The script does not say exactly where bronze branches from. I attached it to Better tools with a dashed line; that placement is my guess.'},
+ {id:'wei',e:0,r:5,l:'Wei court\ncontact ?',yr:'c. 239',terms:[],beat:'9',dashed:true,
+  text:'Around 239, Chinese records drop a scouting report: a ruler called Himiko sends envoys to the Wei court. Her base, Yamatai? Nobody knows. Kyushu or the Kinai, still argued.'},
+
+ {id:'keyhole',e:1,r:0,l:'Keyhole tombs\n+ alliances',yr:'3rd c.',terms:['Map control'],beat:'10',dashed:true,
+  text:'Giant keyhole tombs in the Kinai, with burial styles copied across regions. Looks like Yamato rulers building map control through alliances: the network, not every valley. But tombs can\'t show how tribute worked.'},
+ {id:'defence',e:1,r:1,l:'Dikes, castles,\nbeacons',yr:'664–665',terms:[],beat:'12',
+  text:'After 663, the court goes full defence: the Mizuki earthen dike (664), the Ōno mountain castle (665), beacon fires on Tsushima and Iki. Then, behind the walls, it copies the strongest player on the map: Tang China.'},
+ {id:'literate',e:1,r:2,l:'Literate\nstaff',yr:'after 663',terms:['Prerequisite'],beat:'13',
+  text:'Prerequisite: a Tang-style state needs people who can read and write, and plenty of that know-how arrives with refugees from Baekje.',
+  note:'Baekje refugees bringing literate and administrative skills is writer knowledge (Nihon shoki, Tenji 4 and 10), not checked yet.'},
+ {id:'taiho',e:1,r:3,l:'Tang-style state\n(Taihō Code)',yr:'701',terms:['Age up'],beat:'14',from:['defence','literate'],age:'Taihō Code, 701',
+  text:'Age up. The Taihō Code of 701: ministries, provinces, household registers, allotted rice land, taxes in grain, cloth and labour.'},
+ {id:'nara',e:1,r:4,l:'Nara capital',yr:'710',terms:[],beat:'14',from:['taiho'],
+  text:'Nara becomes the capital in 710, laid out on a grid plan (Heijō).'},
+ {id:'tags',e:1,r:5,l:'Tax tags\n(mokkan)',yr:'',terms:[],beat:'15',from:['taiho'],
+  text:'Does it work? Archaeologists in Nara dig up wooden tags tied to tax goods: province, product, amount. Basically shipping labels.',
+  note:'"Shipping labels" is an analogy: the tags (nifuda) recorded the sender, product and amount, not a destination address.'},
+ {id:'estates',e:1,r:6,l:'Private estates\ngrow',yr:'743+',terms:['Upkeep'],beat:'16',from:['taiho'],replay:true,
+  text:'The upkeep on this build is brutal: registers redone, fields reshuffled, labour hauled across provinces. In 743 the court lets farmers keep newly cleared land, and allotment gets quietly nerfed. From the replay: private estates keep growing.'},
+
+ {id:'warriors',e:2,r:0,l:'Armed provincial\nhouses',yr:'1100s',terms:[],beat:'17–18',
+  text:'Fast forward to the 1100s. Heian court culture, literature and Buddhism are skipped tonight, a real loss. By now the court outsources its fighting to armed provincial houses, which turn on each other.'},
+ {id:'kamakura',e:2,r:1,l:'Kamakura warrior\ngovernment',yr:'1185',terms:[],beat:'18–19',from:['warriors'],
+  text:'1185: Minamoto no Yoritomo\'s side wins, and he gets to appoint stewards across the provinces. Two controllers, one map: the court in Kyoto, and a warrior government in Kamakura handling its vassals\' land and justice. Awkward, but it works.'},
+ {id:'wall',e:2,r:2,l:'Hakata Bay\nstone wall',yr:'after 1274',terms:['Counterplay'],beat:'20',from:['kamakura'],
+  text:'Counterplay: after the 1274 Yuan landing in northern Kyushu, Kamakura builds a stone wall along Hakata Bay. In 1281, a storm wrecks much of the second fleet. (The landings themselves are left off this board.)',
+  note:'"S-tier for exactly one job" is an editorial judgment about the wall\'s role in 1281, not a ranking from a source.'},
+ {id:'land',e:2,r:3,l:'Reward land\n(vassal pay)',yr:'',terms:[],beat:'21',from:['kamakura'],
+  text:'Kamakura pays vassals in land, and a defensive war captures none. Takezaki Suenaga travels all the way to Kamakura to ask for his, then commissions scrolls of his own service.'},
+ {id:'bneck',e:2,r:4,l:'Reward-land\nbottleneck',yr:'',terms:['Resource bottleneck'],beat:'22',from:['land','wall'],dashed:true,
+  text:'Resource bottleneck: plenty of soldiers, not enough reward land. How much it mattered is debated.'},
+ {id:'fall',e:2,r:5,l:'Kamakura falls',yr:'1333',terms:[],beat:'22',from:['bneck'],df:['bneck'],dashed:true,
+  text:'In 1333 Kamakura falls. The script says how much the land shortage mattered is debated, so the arrow from the bottleneck is dashed.'},
+
+ {id:'shatter',e:3,r:0,l:'Central authority\nshatters',yr:'1467',terms:[],beat:'23',
+  text:'1467: war in Kyoto, and central authority shatters. For a century it is a free-for-all: regional lords, the daimyo, fighting for land, followers and survival.'},
+ {id:'guns',e:3,r:1,l:'Guns\n(Tanegashima)',yr:'1543',terms:['Unlock'],beat:'24',
+  text:'1543, by a later account: Portuguese on a Chinese ship reach Tanegashima with guns. Unlocked, and adopted fast: within decades local smiths make them in numbers.',
+  note:'The account (Teppōki) was written in 1606, hence "by a later account".'},
+ {id:'spike',e:3,r:2,l:'Gunner\npower spike',yr:'',terms:['Power spike'],beat:'25',from:['guns'],
+  text:'Lords who can pay for guns and drill gunners hit a power spike. Lords who can\'t fall behind fast.',
+  note:'"Fall behind fast" is a generalisation: some lords without many guns did well for other reasons.'},
+ {id:'reunify',e:3,r:3,l:'Nobunaga, then\nHideyoshi',yr:'',terms:[],beat:'26',from:['spike'],df:['spike'],
+  text:'Oda Nobunaga, then Toyotomi Hideyoshi, pull the map back together.',
+  note:'Dashed arrow: the script follows the gun spike with reunification but does not state a cause.'},
+ {id:'window',e:3,r:4,l:'Timing window',yr:'1598–1600',terms:['Timing window'],beat:'30',from:['reunify'],
+  text:'Hideyoshi dies in 1598. His heir is five. For his strongest ally, that is a timing window. 1600, Sekigahara: Tokugawa Ieyasu\'s coalition wins.'},
+ {id:'survey',e:3,r:5,l:'Survey fields\nin rice',yr:'',terms:['Build order'],beat:'26–27',from:['reunify'],replay:true,
+  text:'Hideyoshi\'s build order: survey fields in rice, register who farms them, and in 1588 collect farmers\' swords.',
+  note:'Caveat from the script: that is the order we see from the replay. Nobody wrote it down as one plan.'},
+ {id:'register',e:3,r:6,l:'Register\nwho farms',yr:'',terms:['Build order'],beat:'26–27',from:['survey'],replay:true,
+  text:'Step two of the build order: register who farms the surveyed fields.'},
+ {id:'swords',e:3,r:7,l:'Collect swords',yr:'1588',terms:['Build order'],beat:'26–27',from:['register'],replay:true,
+  text:'Step three, in 1588: collect farmers\' swords.'},
+
+ {id:'toku',e:4,r:0,l:'Tokugawa\nshogunate',yr:'1603',terms:['Win condition'],beat:'30–31',from:['window'],
+  text:'New controller, new win condition. The Tokugawa are not trying to grow. They are trying to stay in charge: the objective reads SURVIVE, not CONQUER.'},
+ {id:'mapctl',e:4,r:1,l:'Hold cities,\nports, mines',yr:'',terms:['Map control'],beat:'32',from:['toku'],
+  text:'Map control, the efficient way: hold the big cities, ports and mines. Edo, Kyoto, Osaka, Nagasaki, Sado.'},
+ {id:'sankin',e:4,r:2,l:'Alternate years\nin Edo',yr:'',terms:['Upkeep'],beat:'32',from:['toku'],
+  text:'Make the lords pay upkeep on purpose: alternate years in Edo, families kept there. Expensive, and that is the point.'},
+ {id:'gates',e:4,r:3,l:'Four gateways',yr:'1630s on',terms:[],beat:'33',from:['toku'],
+  text:'Foreign contact gets locked down in the 1630s: Christianity banned, Portuguese kicked out. But "closed country" is a label from 1801. Trade keeps flowing through four gateways: Nagasaki, Tsushima, Satsuma, Matsumae. Ryukyu and Ainu lands are separate polities.',
+  note:'"Sakoku" is a term coined in 1801.'},
+ {id:'edo',e:4,r:4,l:'Edo grows',yr:'',terms:[],beat:'34',from:['toku'],
+  text:'Two centuries without a major war, and Edo becomes one of the world\'s biggest cities. (The famines of the 1780s and 1830s are left off this board.)'},
+ {id:'intel',e:4,r:5,l:'Dutch reports\n(intel)',yr:'',terms:[],beat:'35',from:['gates'],dashed:true,
+  text:'Meanwhile, Dutch reports bring news that Britain has beaten Qing China. The intel arrives. What to do with it? That is the argument.'},
+
+ {id:'treat',e:5,r:0,l:'Unequal\ntreaties',yr:'by 1858',terms:[],beat:'36',from:['intel'],df:['intel'],
+  text:'1853: American warships show up near Edo. Within five years, the treaty patch notes are rough: ports opened, tariffs fixed by treaty, foreigners outside Japanese courts.',
+  note:'Dashed arrow: the script places the intel before the treaties but does not call it a cause.'},
+ {id:'meiji',e:5,r:1,l:'Meiji coalition',yr:'1868',terms:['Age up'],beat:'37',from:['treat'],age:'Meiji coalition, 1868',
+  text:'1868: a Satsuma and Chōshū coalition takes down the Tokugawa in the young emperor\'s name. Age up. New controllers: a small circle of oligarchs, inheriting treaties, debt and stipends.'},
+ {id:'switch',e:5,r:2,l:'Tech switch',yr:'by 1873',terms:['Tech switch'],beat:'38',from:['meiji'],
+  text:'Their move: a full tech switch. Railway, state silk mill, conscription, cash land tax, all by 1873. Basically a speedrun, and someone has to pay for it.',
+  note:'"Speedrun" is flavour: the Meiji reforms ran on earlier commerce, literacy and Tokugawa-era foreign learning.'},
+ {id:'rail',e:5,r:3,l:'Railway',yr:'1872–73',terms:['Tech tree','Prerequisite'],beat:'39',from:['switch'],
+  text:'Railways have prerequisites: coal, engineers, imported rails, a loan from London. A branching web, not a ladder.'},
+ {id:'tax',e:5,r:4,l:'Cash land tax\n(who pays?)',yr:'1873',terms:[],beat:'40',from:['switch'],
+  text:'Who pays? Farmers, through the land tax. Former samurai lose their stipends; some rebel, until 1877.'},
+ {id:'codes',e:5,r:5,l:'Western-style\nlaw codes',yr:'',terms:['Counterplay'],beat:'41',from:['meiji'],
+  text:'Counterplay: Western-style law codes, so foreign courts lose their excuse.',
+  note:'Law codes as a precondition for ending extraterritoriality is writer knowledge, not checked (Auslin 2004).'},
+ {id:'const',e:5,r:6,l:'1889\nconstitution',yr:'1889',terms:['Counterplay'],beat:'41',from:['meiji'],
+  text:'A constitution alongside the law codes. (The modern military that fights Qing China and Russia is left off this board.)'},
+ {id:'revise',e:5,r:7,l:'Revise the\ntreaties',yr:'1899 / 1911',terms:['Win condition'],beat:'41',from:['codes','const'],
+  text:'Win condition: revise the unequal treaties. Extraterritoriality ends in 1899; tariff control returns in 1911. The objective tracker ticks two boxes.'},
+
+ {id:'occ',e:7,r:0,l:'1947\nconstitution',yr:'1947',terms:[],beat:'47',
+  text:'Game layer back on, carefully. New controller: an American-led occupation, then elected governments. The 1947 constitution puts sovereignty with the people, and Article Nine renounces war.'},
+ {id:'landref',e:7,r:1,l:'Land reform',yr:'',terms:[],beat:'47',
+  text:'Land reform makes tenants owners.'},
+ {id:'snow',e:7,r:2,l:'Economic\nsnowball',yr:'mid-50s–early 70s',terms:['Snowball'],beat:'48',
+  text:'The economy starts to snowball: incomes fund investment, investment raises output, output raises incomes. Roughly nine to ten percent real growth a year, mid-fifties to early seventies.',
+  note:'A sourced range in the script, not an exact figure.'},
+ {id:'bullet',e:7,r:3,l:'Bullet trains\n+ Olympics',yr:'1964',terms:[],beat:'49',
+  text:'1964: bullet trains and the Tokyo Olympics.'},
+ {id:'oil',e:7,r:4,l:'Oil shock',yr:'1973',terms:['Resource bottleneck'],beat:'49',
+  text:'1973: oil shock. There is that resource bottleneck again, and this time it is imported energy.'},
+ {id:'bubble',e:7,r:5,l:'Bubble bursts',yr:'c. 1990',terms:[],beat:'50',dashed:true,
+  text:'Around 1990 a bubble bursts. Prices slide for years, and economists still argue how much policy dragged it out.'},
+ {id:'people',e:7,r:6,l:'People\nbottleneck',yr:'2010–2025',terms:['Resource bottleneck'],beat:'51',
+  text:'Newest bottleneck: people. About 128 million in 2010, about 123 million in 2025, nearly three in ten aged sixty-five or over. (March 2011 is left off this board.)'},
+ {id:'today',e:7,r:7,l:'Today\'s\ncontrollers',yr:'2025',terms:['Upkeep'],beat:'52',from:['people'],
+  text:'Voters, parties, ministries, firms, households and towns face a growing upkeep bill with fewer hands to pay it.'},
+];
+const BY = {}; NODES.forEach(n => { BY[n.id] = n; n.x = colX(n.e); n.y = Y0 + n.r * RH; });
+ERAS.forEach((e, i) => { e.t0 = T0 + i * ESEC; const L = NODES.filter(n => n.e === i).sort((a, b) => a.r - b.r); L.forEach((n, k) => { n.tu = e.t0 + .5 + k * (4 / Math.max(1, L.length)); }); });
+
+/* ---------- drawing ---------- */
+const bz = (p0, c1, c2, p3, u) => { const m = 1 - u; return [m*m*m*p0[0] + 3*m*m*u*c1[0] + 3*m*u*u*c2[0] + u*u*u*p3[0], m*m*m*p0[1] + 3*m*m*u*c1[1] + 3*m*u*u*c2[1] + u*u*u*p3[1]]; };
+function wrap(s, maxW, size, bold){
+  const out = []; let cur = '';
+  for (const w of s.split(' ')){ const t = cur ? cur + ' ' + w : w; if (txtW(t, size, bold) > maxW && cur){ out.push(cur); cur = w; } else cur = t; }
+  if (cur) out.push(cur); return out;
+}
+function fitTxt(s, x, y, size, c, maxW, bold){ const w = txtW(s, size, bold); txt(s, x, y, w > maxW ? size * maxW / w : size, c, 'center', bold); }
+let HIT = [], hover = null, sel = null, wasPlaying = true;
+
+function edge(a, b, t, dashed){
+  const u = seg(t, Math.max(a.tu, b.tu), Math.max(a.tu, b.tu) + .5); if (u <= 0) return;
+  let pts;
+  if (a.e === b.e){
+    if (b.r - a.r === 1) pts = [[a.x, a.y + NH / 2], [b.x, b.y - NH / 2]];
+    else { const lx = a.x - NW / 2, tx = lx - 10; pts = [[lx, a.y], [tx, a.y + 5], [tx, b.y - 5], [lx, b.y]]; }
+  } else {
+    const p0 = [a.x + NW / 2, a.y], p3 = [b.x - NW / 2, b.y]; pts = [];
+    for (let k = 0; k <= 14; k++) pts.push(bz(p0, [p0[0] + 45, p0[1]], [p3[0] - 45, p3[1]], p3, k / 14));
+  }
+  const n = pts.length, e = pts[n - 1], q = pts[n - 2], ang = Math.atan2(e[1] - q[1], e[0] - q[0]);
+  withA(u, () => {
+    poly(pts, { stroke:dashed ? P.inkSoft : P.ink, w:2, amp:.5, seg:50, dash:dashed ? [6, 5] : undefined });
+    line(e[0], e[1], e[0] - Math.cos(ang - .5) * 9, e[1] - Math.sin(ang - .5) * 9, dashed ? P.inkSoft : P.ink, 2);
+    line(e[0], e[1], e[0] - Math.cos(ang + .5) * 9, e[1] - Math.sin(ang + .5) * 9, dashed ? P.inkSoft : P.ink, 2);
+  });
+}
+function node(n, t){
+  const u = seg(t, n.tu, n.tu + .45), locked = u <= 0, hv = hover === n.id;
+  HIT.push({ id:n.id, x:n.x - NW / 2, y:n.y - NH / 2, w:NW, h:NH });
+  ctx.save(); ctx.translate(n.x, n.y);
+  const sc = (locked ? 1 : Math.max(.05, back(u))) * (hv ? 1.05 : 1); ctx.scale(sc, sc);
+  withA(locked ? .22 : 1, () => {
+    rect(-NW / 2, -NH / 2, NW, NH, { fill:locked ? '#fff' : SCOL[n.e], r:10, w:hv ? 3.2 : 2.2, dash:(n.dashed || locked) ? [6, 4] : undefined });
+    const ls = n.l.split('\n');
+    ls.forEach((s, i) => fitTxt(s, 0, ls.length === 1 ? 1 : (i ? 9 : -9), 14, P.ink, NW - 14, true));
+    n.terms.slice(0, 2).forEach((k, i) => circ(NW / 2 - 4 - i * 11, -NH / 2 + 3, 6, { fill:tcol(k), w:1.6 }));
+    if (n.replay){ rect(-NW / 2 + 4, -NH / 2 - 9, 42, 12, { fill:P.pink, r:6, w:1.2 }); txt('REPLAY', -NW / 2 + 25, -NH / 2 - 3, 9, P.ink, 'center', true); }
+    if (n.dashed && n.id === 'wei') txt('?', NW / 2 - 12, 8, 18, P.inkSoft, 'center', true);
+  });
+  ctx.restore();
+  if (u > 0 && u < 1) withA(1 - u, () => sparkle(n.x + NW / 2 - 4, n.y - NH / 2 + 2, .55 + (1 - u) * .5, u * 6));
+}
+function eraHeader(i, t){
+  const e = ERAS[i], x = X0 + CW * i, a = seg(t, i * .2, i * .2 + .5), act = t >= e.t0 && t < e.t0 + ESEC;
+  withA(a, () => {
+    ctx.save(); ctx.globalAlpha *= act ? .42 : .2; ctx.fillStyle = SCOL[i]; ctx.beginPath(); ctx.roundRect(x + 3, 80, CW - 6, 516, 14); ctx.fill(); ctx.restore();
+    if (act) rect(x + 3, 80, CW - 6, 516, { fill:null, stroke:SCOL[i], r:14, w:3 });
+    circ(x + 20, 96, 12, { fill:SCOL[i], w:2 }); txt(String(i + 1), x + 20, 97, 14, P.ink, 'center', true);
+    txt(e.yrs, x + 38, 96, 11, P.inkSoft, 'left', true);
+    fitTxt(e.n, x + CW / 2, 120, 15, P.ink, CW - 16, true);
+    const lines = wrap(e.plate, CW - 26, 10.5, true).slice(0, 3);
+    rect(x + 9, 136, CW - 18, 6 + lines.length * 13, { fill:'#fff', r:8, w:1.6 });
+    lines.forEach((s, k) => txt(s, x + CW / 2, 145 + k * 13, 10.5, P.ink, 'center', true));
+  });
+}
+function offColumn(t){
+  const c = 6, x = X0 + CW * c, u = seg(t, ERAS[6].t0 + .2, ERAS[6].t0 + 1);
+  withA(.3 + .7 * u, () => {
+    rect(x + 9, 190, CW - 18, 400, { fill:'rgba(120,110,125,.18)', r:12, w:2, hatch:P.grayD, dash:[8, 6] });
+    ['Game layer', 'off', '', '1931–1945', '', 'No metaphor', 'fits these', 'years.'].forEach((s, i) => txt(s, x + CW / 2, 262 + i * 26, i === 0 || i === 1 ? 20 : 16, P.ink, 'center', i < 2 || i === 3));
+  });
+}
+function toast(t){
+  for (const n of NODES) if (n.age && t > n.tu && t < n.tu + 2){
+    const u = seg(t, n.tu, n.tu + .3) * (1 - seg(t, n.tu + 1.5, n.tu + 2)), s = 'AGE ADVANCED  ·  ' + n.age;
+    withA(u, () => { const w = txtW(s, 22, true) + 50; rect(W / 2 - w / 2, 150 + (1 - u) * -10, w, 44, { fill:P.yellow, r:22, w:2.6 }); txt(s, W / 2, 173 - (1 - u) * 10, 22, P.ink, 'center', true); });
+  }
+}
+function chrome(t){
+  txt('Japan: The Long Campaign', 24, 34, 28, P.ink, 'left', true);
+  const w = txtW('Japan: The Long Campaign', 28, true); poly([[24, 54], [24 + w * .5, 57], [24 + w, 54]], { stroke:P.yellow, w:4.5, amp:.4, seg:80 });
+  txt('tech tree · draft · facts from the script, unchecked', W - 24, 34, 15, P.inkSoft, 'right');
+  txt('Dashed = uncertain, inferred or debated   ·   coloured dot = a game term (click for its card)   ·   left off on purpose: wars, famine, colonial rule, disasters', W / 2, 606, 12, P.inkSoft);
+  const k = clamp(Math.floor((t - T0) / ESEC), -1, 7), cap = t < T0 ? 'Eight eras, one map. Watch the tree unlock, then click any tech.' : t >= T0 + ESEC * 8 ? 'Click any tech to read its card  ·  space pauses  ·  1–8 jumps to an era  ·  R restarts' : ERAS[k].cap;
+  const cw = txtW(cap, 19) + 44; rect(W / 2 - cw / 2, 622, cw, 42, { fill:'rgba(255,255,255,.8)', r:21, w:1.8 }); txt(cap, W / 2, 643, 19, P.ink);
+  const x0 = 44, x1 = W - 190, y = 696, sw = (x1 - x0) / 8;
+  for (let i = 0; i < 8; i++){
+    const a = x0 + i * sw + 3, b = x0 + (i + 1) * sw - 3, f = clamp((t - T0 - i * ESEC) / ESEC);
+    ctx.fillStyle = 'rgba(74,68,83,.1)'; ctx.beginPath(); ctx.roundRect(a, y - 4, b - a, 8, 4); ctx.fill();
+    if (f > 0){ ctx.fillStyle = SCOL[i]; ctx.beginPath(); ctx.roundRect(a, y - 4, Math.max(8, (b - a) * f), 8, 4); ctx.fill(); }
+  }
+  txt(ended ? 'click to replay' : `${t.toFixed(1)}s / ${DUR}s${!playing && !sel ? ' · paused' : ''}`, W - 44, y, 15, P.inkSoft, 'right');
+}
+function card(n){
+  ctx.fillStyle = 'rgba(74,68,83,.5)'; ctx.fillRect(0, 0, W, H);
+  const e = ERAS[n.e], cw = 880, x = (W - cw) / 2, iw = cw - 70, ops = []; let y = 28;
+  ops.push(['t', n.l.replace('\n', ' '), x + 35, y + 16, 32, P.ink, true]); y += 54;
+  ops.push(['t', `Era ${n.e + 1} · ${e.n} · ${e.yrs}${n.yr ? ' · ' + n.yr : ''}`, x + 35, y, 16, P.inkSoft, false]); y += 26;
+  ops.push(['t', 'Controller: ' + e.plate, x + 35, y, 15, P.inkSoft, true]); y += 30;
+  wrap(n.text, iw, 21).forEach(s => { ops.push(['t', s, x + 35, y, 21, P.ink, false]); y += 30; }); y += 8;
+  n.terms.forEach(k => {
+    const cwid = txtW(k.toUpperCase(), 14, true) + 22; ops.push(['p', k.toUpperCase(), x + 35, y, cwid, tcol(k)]);
+    const ls = wrap(TERMS[k], iw - cwid - 14, 17); ls.forEach((s, i) => ops.push(['t', s, x + 35 + cwid + 12, y + i * 23, 17, P.ink, false])); y += Math.max(1, ls.length) * 23 + 12;
+  });
+  if (n.from && n.from.length){ const s = 'Needs: ' + n.from.map(f => BY[f].l.replace('\n', ' ')).join(' + '); wrap(s, iw, 17).forEach(l => { ops.push(['t', l, x + 35, y, 17, P.ink, true]); y += 24; }); y += 6; }
+  const notes = []; if (n.note) notes.push(n.note); if (n.dashed) notes.push('Dashed outline: uncertain, inferred or debated in the script.'); if (n.replay) notes.push('REPLAY: this is hindsight; nobody planned it as one move.');
+  if (notes.length){ const ls = []; notes.forEach(s => wrap(s, iw - 28, 16).forEach(l => ls.push(l))); ops.push(['b', x + 25, y - 6, cw - 50, ls.length * 22 + 14]); ls.forEach((l, i) => ops.push(['t', l, x + 40, y + 8 + i * 22, 16, P.ink, false])); y += ls.length * 22 + 22; }
+  ops.push(['t', `Script beat${n.beat.includes('–') ? 's' : ''} ${n.beat}   ·   click anywhere to close`, x + 35, y + 4, 14, P.inkSoft, false]); y += 32;
+  const top = Math.max(16, (H - y) / 2 - 10);
+  ctx.save(); ctx.translate(0, top); rect(x, 8, cw, y, { fill:'#fffdf8', r:20, w:3 }); rect(x, 8, cw, 8, { fill:SCOL[n.e], r:4, w:2 });
+  ctx.translate(0, 8);
+  for (const o of ops){
+    if (o[0] === 't') txt(o[1], o[2], o[3], o[4], o[5], 'left', o[6]);
+    else if (o[0] === 'p'){ rect(o[2], o[3] - 13, o[4], 26, { fill:o[5], r:13, w:1.8 }); txt(o[1], o[2] + o[4] / 2, o[3], 14, P.ink, 'center', true); }
+    else rect(o[1], o[2], o[3], o[4], { fill:P.yellowL, r:10, w:1.6 });
+  }
+  ctx.restore();
+}
+
+/* ---------- render + playback ---------- */
+let T = 0, playing = true, ended = false, last = null;
+function render(t){
+  ctx.setTransform(K, 0, 0, K, 0, 0); ctx.globalAlpha = 1; seed = (Math.floor(t * 8) + 1) * 7919; HIT = [];
+  paper();
+  for (let i = 0; i < NCOL; i++) eraHeader(i, t);
+  offColumn(t);
+  for (const n of NODES) for (const f of (n.from || [])) edge(BY[f], n, t, (n.df || []).includes(f));
+  for (const n of NODES) node(n, t);
+  toast(t); chrome(t);
+  if (sel) card(BY[sel]);
+}
+function resize(){
+  const dpr = Math.min(2, window.devicePixelRatio || 1), s = Math.min(innerWidth / W, innerHeight / H) * .98;
+  cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+  cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr); K = cv.width / W;
+}
+function tick(now){
+  if (last === null) last = now;
+  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (playing){ T += dt; if (T >= DUR){ T = DUR; playing = false; ended = true; } }
+  render(T); requestAnimationFrame(tick);
+}
+function seek(t){ T = clamp(t, 0, DUR); ended = T >= DUR; if (ended) playing = false; }
+function toggle(){ if (ended){ seek(0); playing = true; } else playing = !playing; }
+function openCard(id){ wasPlaying = playing; playing = false; sel = id; }
+function closeCard(){ sel = null; if (wasPlaying && !ended) playing = true; }
+const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; };
+const hit = (x, y) => { for (const h of HIT) if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) return h.id; return null; };
+cv.addEventListener('pointermove', e => { const [x, y] = pos(e); hover = sel ? null : hit(x, y); cv.style.cursor = hover ? 'pointer' : 'default'; });
+cv.addEventListener('click', e => { if (sel) return closeCard(); const [x, y] = pos(e), id = hit(x, y); if (id) openCard(id); else toggle(); });
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeCard();
+  else if (e.key === ' '){ e.preventDefault(); if (sel) closeCard(); else toggle(); }
+  else if (e.key === 'ArrowRight') seek(T + 2);
+  else if (e.key === 'ArrowLeft'){ seek(T - 2); ended = false; }
+  else if (e.key === 'r' || e.key === 'R'){ sel = null; seek(0); playing = true; }
+  else if (/^[1-8]$/.test(e.key)){ sel = null; seek(T0 + (+e.key - 1) * ESEC); ended = false; playing = true; }
+});
+addEventListener('resize', () => { resize(); render(T); });
+const qs = new URLSearchParams(location.search), qt = parseFloat(qs.get('t'));
+if (!isNaN(qt)){ seek(qt); playing = false; ended = false; }
+if (qs.get('node') && BY[qs.get('node')]){ sel = qs.get('node'); playing = false; }
+window.renderAt = (t, id) => { seek(t); playing = false; ended = false; sel = id && BY[id] ? id : null; render(T); };
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
